@@ -46,7 +46,7 @@ body[data-theme=classic] .dock{display:none}
 body[data-theme=classic] .wrap{padding:calc(12px + env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))}
 body[data-theme=classic]:not([data-tab=handset]) #handset,
 body[data-theme=classic]:not([data-tab=book]) .wrap>:is(#book-head,#search-form,#results,#more,#results-end,#book-new,#recent-heading,#recent,#book-all,#book-request),
-body[data-theme=classic]:not([data-tab=queue]) .wrap>:is(#hero,#queue-heading,#queue){display:none}
+body[data-theme=classic]:not([data-tab=queue]) .wrap>:is(#hero,#queue-heading,#queue,#queue-more){display:none}
 body[data-theme=classic] #hero .reactions{display:none}
 /* The LCD window. */
 .lcd-window{margin:10px 0 14px;padding:12px 14px 10px;background:var(--lcd);border-radius:12px;box-shadow:inset 0 0 0 2px #000,inset 0 0 0 4px #2b3c8e,inset 0 8px 18px #000a}
@@ -207,11 +207,13 @@ body[data-theme=classic] #hero-lyrics svg{width:18px;height:18px}
 body[data-theme=classic] #open-controls{display:none}
 /* The list's own header band: 예약곡 · RESERVED, the count and the time it adds up to. */
 body[data-theme=classic] #queue-heading{margin:16px 0 0;padding:10px 14px;border-radius:14px 14px 0 0;background:linear-gradient(#3b3aa6,#26245f);box-shadow:inset 0 0 0 2px #000,inset 0 0 0 4px #2b3c8e}
-body[data-theme=classic] #queue-heading h2{display:flex;align-items:center;gap:6px;width:100%;font:400 17px 'Black Han Sans',sans-serif;letter-spacing:.04em;color:#fff}
+body[data-theme=classic] #queue-heading h2{display:flex;align-items:center;gap:6px;width:auto;min-width:0;flex:1;font:400 17px 'Black Han Sans',sans-serif;letter-spacing:.04em;color:#fff}
 body[data-theme=classic] #queue-heading h2 small{margin-left:4px;font:700 10px 'IBM Plex Sans KR',sans-serif;color:#aab0ff;letter-spacing:.14em}
 body[data-theme=classic] #queue-count{margin-left:auto;padding:0;background:none;font:14px DSEG7,monospace;color:var(--cyan)}
 body[data-theme=classic] .qtotal{font:700 11px 'IBM Plex Sans KR',sans-serif;color:#cfd3ff;letter-spacing:.06em}
+body[data-theme=classic] #queue-collapse{flex:none;margin-left:6px;padding:5px 8px;border:1px solid #8f95d866;border-radius:8px;background:linear-gradient(#3a3c47,#272830);box-shadow:0 2px 0 #0b0b0f;color:#d5d7eb;font:700 10px 'IBM Plex Sans KR',sans-serif}
 body[data-theme=classic] #queue{grid-template-columns:minmax(0,1fr);margin-top:0;padding:4px;border-radius:0 0 14px 14px;overflow:hidden;background:var(--lcd);box-shadow:inset 0 0 0 2px #000,inset 0 0 0 4px #2b3c8e}
+body[data-theme=classic] #queue-more{min-height:42px;margin:0;padding:10px 14px;border:0;border-radius:0 0 14px 14px;background:var(--lcd);box-shadow:inset 0 -2px 0 #000,inset 0 0 0 4px #2b3c8e;color:var(--cyan);font:700 11px 'IBM Plex Sans KR',sans-serif;letter-spacing:.04em}
 body[data-theme=classic] #queue .queue-swipe{border-top:1px solid #ffffff10;background:var(--lcd)}
 body[data-theme=classic] #queue .queue-swipe:first-child{border-top:0}
 body[data-theme=classic] #queue .row{gap:10px;padding:10px 10px 10px 14px;border:0;border-radius:0;background:none}

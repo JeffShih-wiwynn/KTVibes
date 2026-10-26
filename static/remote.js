@@ -168,6 +168,8 @@ addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(openLyricsDialog)op
 // Queue. Rebuilt only when its songs or statuses change, so position reports never swap a button
 // out from under a tap; preparation progress updates in place. A drag holds rebuilds until it ends.
 let queueShape,dragging=null,swipingQueue=null;
+const QUEUE_PAGE_SIZE=10;
+let queueVisibleCount=QUEUE_PAGE_SIZE;
 const RING=2*Math.PI*23;
 const statusText=item=>item.status==='ready'?'Ready':item.status==='error'?'Failed':prepLabel(item).text;
 const queueRenderShape=()=>JSON.stringify([!!state.current,...state.upcoming.map(i=>[i.key,i.title,i.artist,i.status,i.error])]);
@@ -176,6 +178,12 @@ const STATUS_KO={queued:'다운로드 대기',downloading:'다운로드 중',sep
 const statusKo=(item,index)=>index===0&&item.status==='ready'?'다음곡':STATUS_KO[item.status]||'';
 function showQueue(before){
  const count=state.upcoming.length;$('queue-count').textContent=$('dock-count').textContent=count;
+ queueVisibleCount=Math.max(QUEUE_PAGE_SIZE,Math.min(queueVisibleCount,count||QUEUE_PAGE_SIZE));
+ $('queue-collapse').hidden=queueVisibleCount<=QUEUE_PAGE_SIZE||count<=QUEUE_PAGE_SIZE;
+ $('queue-collapse').setAttribute('aria-expanded',String(queueVisibleCount>QUEUE_PAGE_SIZE));
+ const remaining=Math.max(0,count-queueVisibleCount),showCount=Math.min(QUEUE_PAGE_SIZE,remaining);
+ $('queue-more').hidden=remaining===0;
+ $('queue-more').textContent=`Show ${showCount} more · ${remaining} remaining`;
  if(before&&count>before.upcoming.length&&!REDUCED.matches)for(const id of ['queue-count','dock-count']){const c=$(id);c.classList.remove('bump');void c.offsetWidth;c.classList.add('bump');}
  const shape=queueRenderShape();  // lyrics-source updates are patched into their button without rebuilding rows
  if(shape!==queueShape&&!dragging&&!swipingQueue){
@@ -185,7 +193,7 @@ function showQueue(before){
   // FLIP: remember where each row was, rebuild, then animate rows from their old spots.
   const tops=new Map([...$('queue').children].filter(row=>row.dataset.key).map(row=>[row.dataset.key,row.getBoundingClientRect().top]));
   queueShape=shape;
-  $('queue').replaceChildren(...state.upcoming.map((item,index)=>queueRow(item,index,preparing.has(item.key))));
+  $('queue').replaceChildren(...state.upcoming.slice(0,queueVisibleCount).map((item,index)=>queueRow(item,index,preparing.has(item.key))));
   if(!count)$('queue').append(emptyQueue());
   if(tops.size&&!REDUCED.matches)for(const row of $('queue').children){
    if(!row.dataset.key)continue;
@@ -201,6 +209,8 @@ function showQueue(before){
   const ring=row.querySelector('.ring');if(ring){ring.style.setProperty('--p',item.progress||0);ring.classList.toggle('busy',!item.progress&&item.status!=='ready');}
  }
 }
+$('queue-more').onclick=()=>{queueVisibleCount=Math.min(state.upcoming.length,queueVisibleCount+QUEUE_PAGE_SIZE);queueShape=null;showQueue(state);};
+$('queue-collapse').onclick=()=>{queueVisibleCount=QUEUE_PAGE_SIZE;queueShape=null;showQueue(state);$('queue-heading').scrollIntoView({block:'start',behavior:REDUCED.matches?'auto':'smooth'});};
 // An empty queue invites the next song, with a button straight to the search box.
 function emptyQueue(){
  const box=el('div',undefined,'empty'),icon=el('span',undefined,'empty-icon'),find=el('button','Find a song','empty-action');
@@ -303,7 +313,7 @@ function startDrag(row,e){
  if(dragging)return;
  if(row.classList.contains('queue-swipe')&&openSwipe===row)closeSwipe();
  const rows=[...$('queue').children].filter(r=>r.dataset.key),from=rows.indexOf(row),boxes=rows.map(r=>r.getBoundingClientRect());
- dragging={row,from,to:from,y:e.clientY,rows,keys:rows.map(r=>r.dataset.key),boxes,height:boxes[from].height};
+ dragging={row,from,to:from,y:e.clientY,rows,keys:rows.map(r=>r.dataset.key),allKeys:state.upcoming.map(item=>item.key),boxes,height:boxes[from].height};
  row.classList.add('lifted');for(const r of rows)if(r!==row)r.classList.add('shifting');
  haptic(15);
  addEventListener('pointermove',onDrag);addEventListener('pointerup',endDrag,{once:true});addEventListener('pointercancel',endDrag,{once:true});
@@ -327,11 +337,15 @@ function endDrag(){
   dragging=null;
   if(d.to!==d.from){
    // Show the new order now; the server's answer then matches it, so nothing jumps.
+   const liveKeys=state.upcoming.map(item=>item.key);
+   if(liveKeys.length!==d.allKeys.length||liveKeys.some((key,index)=>key!==d.allKeys[index])){queueShape=null;showQueue(state);toast('Queue changed while dragging. Please try again.',undefined,'err');return;}
    const order=[...d.keys];order.splice(d.to,0,...order.splice(d.from,1));
+   // Only the visible prefix is draggable; keep every undisplayed song in its original order after it.
+   const visible=new Set(d.keys),completeOrder=[...order,...d.allKeys.filter(key=>!visible.has(key))];
    const currentItems=new Map(state.upcoming.map(item=>[item.key,item]));
-   if(order.length!==currentItems.size||order.some(key=>!currentItems.has(key))){queueShape=null;showQueue(state);toast('Queue changed while dragging. Please try again.',undefined,'err');return;}
-   state={...state,upcoming:order.map(key=>currentItems.get(key))};queueShape=null;
-   send({action:'reorder',keys:order});
+   if(completeOrder.length!==currentItems.size||completeOrder.some(key=>!currentItems.has(key))){queueShape=null;showQueue(state);toast('Queue changed while dragging. Please try again.',undefined,'err');return;}
+   state={...state,upcoming:completeOrder.map(key=>currentItems.get(key))};queueShape=null;
+   send({action:'reorder',keys:completeOrder});
   }else queueShape=null;
   showQueue(state);
  };
