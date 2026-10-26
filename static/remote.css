@@ -45,6 +45,7 @@ p{margin:0}a{color:var(--ink);text-decoration:none}
 .result-icon{display:grid;place-items:center;width:34px;height:34px;flex:none;border-radius:50%;color:var(--lime);transition:background .25s,color .25s}
 .result-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 .result-icon.added{background:var(--lime);color:var(--on-lime)}.result-icon.added svg{animation:pop .45s var(--bouncy)}
+.result-icon.confirm{background:var(--amber);color:#211b0d}.result-icon.count{background:var(--lime);color:var(--on-lime);font-size:12px;font-weight:850;font-variant-numeric:tabular-nums}
 .result-icon.failed{color:var(--red)}
 @keyframes pop{from{transform:scale(.3) rotate(-30deg);opacity:0}}
 /* New results rise in one after another. */
@@ -169,6 +170,10 @@ p{margin:0}a{color:var(--ink);text-decoration:none}
 .song-more{position:absolute;top:0;bottom:0;right:8px;z-index:2;width:36px;height:36px;margin:auto 0;border-radius:18px;color:var(--muted);font-size:20px;line-height:1;transition:opacity .2s}
 .song-more:hover{color:var(--ink);background:#ffffff14}
 .swipe.open .song-more,.swipe.dragging .song-more{opacity:0;pointer-events:none}
+.recent-next{position:absolute;top:0;right:8px;bottom:0;z-index:2;display:grid;place-items:center;width:36px;height:36px;margin:auto 0;border-radius:18px;color:var(--lime);transition:opacity .2s,background .2s}
+.recent-next svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.recent-next:hover{background:#d7fc7018}.recent-next:disabled{opacity:.5}
+.swipe.open .recent-next,.swipe.dragging .recent-next{opacity:0;pointer-events:none}
 .song-menu{position:absolute;top:calc(50% + 20px);right:8px;z-index:6;display:flex;flex-direction:column;min-width:190px;padding:6px;background:var(--panel2);border:1px solid var(--line);border-radius:16px;box-shadow:0 16px 40px #000a;transform-origin:100% 0;animation:menu-in .25s var(--spring)}
 .song-menu button{padding:12px 14px;border-radius:10px;text-align:left;font-size:14px}
 .song-menu button:hover{background:#ffffff12}.song-menu .danger{color:var(--red)}

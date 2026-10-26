@@ -252,7 +252,7 @@ def prepared_songs() -> dict:
     return songs
 
 @app.get("/api/recent")
-async def recent(limit: int = Query(20, ge=1, le=50)):
+async def recent(limit: int = Query(10, ge=1, le=50)):
     """Songs that went on stage, most recent first, so the remote can re-queue them without a search."""
     songs = prepared_songs()
     played = sorted((when, video_id) for video_id, when in state.played.items() if video_id in songs)
@@ -566,7 +566,15 @@ async def enqueue(song: Song):
     if len(state.upcoming) >= 100:
         raise HTTPException(409, "Queue is full")
     try:
-        return await state.add(song.id, song.artist, song.title)
+        # Search and Recent expose an explicit duplicate-confirmation step.
+        return await state.add(song.id, song.artist, song.title, allow_duplicate=True)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+@app.post("/api/queue/next")
+async def enqueue_next(song: Song):
+    try:
+        return await state.add_next(song.id, song.artist, song.title)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 

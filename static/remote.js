@@ -19,7 +19,7 @@ function render(next){
  const before=state;state=next;state.received=Date.now()/1000;openLyricsDialog?.onState(before,state);
  // The header pill reports the TV, since that decides whether anything can play.
  $('connection').textContent=!state.player_connected?'Open /tv on a device':state.player_audio?'Device ready':'Tap Enable sound on the device';$('connection').classList.toggle('warn',!state.player_audio);$('connection').classList.toggle('off',!state.player_connected);
- document.body.dataset.theme=state.theme||'default';showNow(!before);showControls(before);showQueue(before);showClassic();classicUi?.render(state);
+ document.body.dataset.theme=state.theme||'default';showNow(!before);showControls(before);showQueue(before);showClassic();classicUi?.render(state);syncResultCards();
  const ready=[state.current,...state.upcoming].filter(i=>i?.status==='ready').map(i=>i.key).join();
  if(ready!==readyKeys){readyKeys=ready;loadRecent();classicUi?.loadBook();}
 }
@@ -344,30 +344,61 @@ async function loadRecent(){
   const songs=await api('/api/recent'),shape=songs.map(song=>song.id).join();
   if(shape===recentShape)return;
   recentShape=shape;$('recent').replaceChildren();
-  songs.forEach(song=>showResult({...song,channel:song.artist,parsed:{artist:song.artist,title:song.title}},$('recent'),row=>swipeable(row,song)));
+  songs.forEach(song=>showResult({...song,channel:song.artist,parsed:{artist:song.artist,title:song.title}},$('recent'),row=>swipeable(row,song,{recentNext:true})));
   if(!songs.length)$('recent').append(emptyNote('♪','아직 부른 노래가 없어요','Nothing sung yet.'));
  }catch{}
 }
 // Search in pages of 10; "More results" appends the next page.
 let search={query:'',page:0,seen:new Set()},searchRun=0;
 const enqueue=song=>api('/api/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:song.id,artist:song.artist,title:song.title})});
-// Result button states: add, added, failed.
-const ICONS={add:'<path d="M12 5v14M5 12h14"/>',added:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',failed:'<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/>'};
+const enqueueNext=song=>api('/api/queue/next',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:song.id,artist:song.artist,title:song.title})});
+// Queue-copy counts include the current song and every non-failed upcoming item.
+function queueCopies(id){return [state?.current,...(state?.upcoming||[])].filter(item=>item?.id===id&&item.status!=='error').length;}
+function syncResultCard(button){
+ if(!button?.dataset.videoId)return;
+ const id=button.dataset.videoId,count=queueCopies(id),status=button.querySelector('.result-icon'),note=button.querySelector('.result-note');
+ const confirming=button.dataset.confirm==='1';button.dataset.queueCount=String(count);
+ if(confirming){icon(status,'confirm');button.setAttribute('aria-label',`Confirm adding ${button.dataset.title} to the queue again`);return;}
+ if(count){button.classList.add('added');button.classList.remove('failed');
+  if(count===1)icon(status,'added');else{status.className='result-icon count';status.textContent=String(count);}
+  note?.replaceChildren(el('em',count===1?'예약됨':`${count}회 예약`),` · ${count===1?'queued':'copies queued'}`);
+  button.setAttribute('aria-label',`${button.dataset.title}, ${count} ${count===1?'copy':'copies'} in the queue. Activate to add another copy.`);
+ }else{
+  button.classList.remove('added');if(!button.classList.contains('failed'))icon(status,'add');
+  if(!button.classList.contains('failed'))note?.replaceChildren();
+  button.setAttribute('aria-label',`Add ${button.dataset.title} to the queue`);
+ }
+}
+function syncResultCards(){document.querySelectorAll('.result[data-video-id]').forEach(syncResultCard);}
+function applyQueueItem(item,front=false){
+ if(!state||!item?.key)return;
+ const existingIndex=state.upcoming.findIndex(candidate=>candidate.key===item.key);
+ if(state.current?.key===item.key||existingIndex>=0&&(!front||existingIndex===0))return;
+ const upcoming=state.upcoming.filter(candidate=>candidate.key!==item.key);
+ if(state.current?.key!==item.key)upcoming.splice(front?0:upcoming.length,0,item);
+ render({...state,upcoming});
+}
+// Result button states: add, queued check/count, confirm another, or failed.
+const ICONS={add:'<path d="M12 5v14M5 12h14"/>',added:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',confirm:'<path d="M12 5v14M5 12h14"/>',failed:'<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/>'};
 function icon(node,name){node.className=`result-icon ${name}`;node.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;}
 // One tap queues the song with the artist/title parsed from YouTube (or confirmed earlier, for recent songs).
 function showResult(song,list=$('results'),wrap=row=>row,index=-1){
- const b=el('button',undefined,index<0?'result':'result enter');if(index>=0)b.style.setProperty('--i',index);
+ const b=el('button',undefined,index<0?'result':'result enter');b.dataset.videoId=song.id;b.dataset.title=song.title;if(index>=0)b.style.setProperty('--i',index);
  const image=el('img');image.src=song.thumbnail;image.alt='';const info=el('div');const title=el('strong',song.title);if(song.cached)title.append(el('span','READY','tag'));const note=el('small',undefined,'result-note classic-only');info.append(title,el('small',`${song.channel} · ${clock(song.duration)}`),note);const status=el('span');icon(status,'add');b.append(image,info,status);
- // Classic swaps the channel line for what happened to the add.
- const mark=(name,...text)=>{b.classList.remove('added','failed');b.classList.add(name);note.replaceChildren(...text);};
  b.onclick=async()=>{
   // A swipe ends in a click; an open row closes on tap instead of queueing.
   if(b.dataset.dragged){delete b.dataset.dragged;return;}if(b.parentElement?.classList.contains('open')){closeSwipe();return;}
+  if(b.disabled)return;
+  if(queueCopies(song.id)>0&&b.dataset.confirm!=='1'){
+   b.dataset.confirm='1';syncResultCard(b);toast(`Add ${song.title} again? Tap the orange + to confirm.`);
+   clearTimeout(b.confirmTimer);b.confirmTimer=setTimeout(()=>{delete b.dataset.confirm;syncResultCard(b);},4500);return;
+  }
+  clearTimeout(b.confirmTimer);delete b.dataset.confirm;
   b.disabled=true;
-  try{await enqueue({id:song.id,...song.parsed});icon(status,'added');mark('added',el('em','예약됨'),' · added');haptic([10,40,10]);flyToQueue(image);toast(`Added ${song.parsed.title}`);}
-  catch(error){icon(status,'failed');mark('failed',"Couldn't add. Try again");toast(error.message,undefined,'err');}finally{b.disabled=false;}
+  try{const item=await enqueue({id:song.id,...song.parsed});applyQueueItem(item);haptic([10,40,10]);flyToQueue(image);toast(`Added ${song.parsed.title}`);}
+  catch(error){icon(status,'failed');b.classList.add('failed');note.replaceChildren("Couldn't add. Try again");toast(error.message,undefined,'err');}finally{b.disabled=false;syncResultCard(b);}
  };
- list.append(wrap(b));
+ list.append(wrap(b));syncResultCard(b);
 }
 // The thumbnail arcs into whichever queue count is on screen: the outer box moves across evenly,
 // the inner one up or down with an overshooting ease, which together trace a curve.
@@ -491,7 +522,7 @@ async function pickLyrics(song,{followCurrent=false}={}){
   refreshControls();
  }};
 }
-// A ⋯ button on each recent song opens its advanced actions.
+// Classic Songbook rows retain their advanced menu; Recent uses a direct Queue Next action.
 let openMenu=null;
 function closeMenu(){openMenu?.remove();openMenu=null;}
 document.addEventListener('pointerdown',e=>{if(openMenu&&!openMenu.contains(e.target)&&!e.target.closest('.song-more'))closeMenu();});
@@ -507,10 +538,29 @@ function songMenu(wrap,song,del){
  remove.onclick=()=>{closeMenu();del.click();};
  menu.append(label,refetch,remove);wrap.append(menu);openMenu=menu;refetch.focus();
 }
-function swipeable(row,song){
- const wrap=el('div',undefined,'swipe'),del=el('button','Delete','swipe-delete'),more=el('button','⋯','song-more');del.setAttribute('aria-label',`Delete ${song.title} from this device`);
- more.setAttribute('aria-label',`More actions for ${song.title}`);more.setAttribute('aria-haspopup','menu');more.onclick=()=>songMenu(wrap,song,del);
- wrap.append(row,del,more);
+async function queueSongNext(song,button,image){
+ if(button.disabled)return;button.disabled=true;
+ try{
+  const result=await enqueueNext({id:song.id,artist:song.artist,title:song.title});
+  if(result.added||result.moved)applyQueueItem(result.item,true);
+  if(result.already_next)toast(`${song.title} is already next`);
+  else if(result.moved)toast(`Moved ${song.title} to next`);
+  else{toast(`Added ${song.title} as next`);flyToQueue(image);}
+  haptic(10);
+ }catch(error){toast(error.message,undefined,'err');}
+ finally{button.disabled=false;}
+}
+function swipeable(row,song,{recentNext=false}={}){
+ const wrap=el('div',undefined,'swipe'),del=el('button','Delete','swipe-delete');del.setAttribute('aria-label',`Delete ${song.title} from this device`);
+ let action;
+ if(recentNext){
+  action=el('button',undefined,'recent-next');action.type='button';action.setAttribute('aria-label',`Add ${song.title} to play next`);action.title='Play next';
+  action.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14l9-7-9-7zM19 5v14"/></svg>';
+  action.onclick=()=>queueSongNext(song,action,row.querySelector('img'));
+ }else{
+  action=el('button','⋯','song-more');action.setAttribute('aria-label',`More actions for ${song.title}`);action.setAttribute('aria-haspopup','menu');action.onclick=()=>songMenu(wrap,song,del);
+ }
+ wrap.append(row,del,action);
  let start=null,dx=0,dragging=false;
  row.addEventListener('pointerdown',e=>{delete row.dataset.dragged;if(e.pointerType==='mouse'&&e.button)return;start={x:e.clientX,y:e.clientY,base:wrap.classList.contains('open')?-REVEAL:0};dx=start.base;dragging=false;});
  row.addEventListener('pointermove',e=>{

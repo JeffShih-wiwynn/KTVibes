@@ -243,21 +243,38 @@ class State:
         undo, self.undo = self.undo, None
         if not undo or time.time() > undo["until"]:
             raise ValueError("Nothing to undo")
-        if self.queued(undo["item"]["id"]):
-            raise ValueError("That song is already in the queue")
         self.upcoming.insert(min(undo["index"], len(self.upcoming)), undo["item"])
 
     def queued(self, video_id):
         return any(i and i["id"] == video_id and i["status"] != "error" for i in (self.current, *self.upcoming))
 
-    async def add(self, video_id, artist, title):
-        if self.queued(video_id):
+    async def add(self, video_id, artist, title, *, allow_duplicate=False):
+        if not allow_duplicate and self.queued(video_id):
             raise ValueError("That song is already in the queue")
         item = self.entry(video_id, artist, title)
         self.upcoming.append(item)
         self.wake.set()
         await self.broadcast()
         return item
+
+    async def add_next(self, video_id, artist, title):
+        """Make an existing upcoming copy next, or add a new copy at the front."""
+        existing = next((item for item in self.upcoming
+                         if item["id"] == video_id and item["status"] != "error"), None)
+        if existing is not None:
+            if self.upcoming[0] is existing:
+                return {"item": existing, "added": False, "moved": False, "already_next": True}
+            self.upcoming.remove(existing)
+            self.upcoming.insert(0, existing)
+            await self.broadcast()
+            return {"item": existing, "added": False, "moved": True, "already_next": False}
+        if len(self.upcoming) >= 100:
+            raise ValueError("Queue is full")
+        item = self.entry(video_id, artist, title)
+        self.upcoming.insert(0, item)
+        self.wake.set()
+        await self.broadcast()
+        return {"item": item, "added": True, "moved": False, "already_next": False}
 
     async def control(self, message, sender=None):
         action = message.get("action")
@@ -365,8 +382,6 @@ class State:
             item = next((i for i in self.upcoming if i["key"] == message.get("key") and i["status"] == "error"), None)
             if item is None:
                 return
-            if self.queued(item["id"]):
-                raise ValueError("That song is already in the queue")
             item.update(status="queued", error=None, step=None, progress=None)
         elif action == "reorder":
             keys = message.get("keys", [])

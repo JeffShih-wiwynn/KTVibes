@@ -451,12 +451,36 @@ class APITests(unittest.TestCase):
         (cache / 'ccccccccccc').mkdir()  # audio only
         self.assertEqual(self.client.get('/api/ambient').json(), ['bbbbbbbbbbb'])
 
-    def test_duplicate_queue_request_conflicts(self):
+    def test_duplicate_queue_requests_create_separate_entries(self):
         song = {'id': 'abcdefghijk', 'artist': 'IU', 'title': '좋은 날'}
         self.assertEqual(self.client.post('/api/queue', json=song).status_code, 201)
         response = self.client.post('/api/queue', json=song)
-        self.assertEqual(response.status_code, 409)
-        self.assertIn('already', response.json()['detail'])
+        self.assertEqual(response.status_code, 201)
+        items = self.main.state.upcoming
+        self.assertEqual([item['id'] for item in items], [song['id'], song['id']])
+        self.assertNotEqual(items[0]['key'], items[1]['key'])
+
+    def test_queue_next_adds_or_prioritizes_without_unneeded_duplicates(self):
+        first = {'id': 'abcdefghijk', 'artist': 'IU', 'title': 'First'}
+        second = {'id': '12345678901', 'artist': 'Aimer', 'title': 'Second'}
+        self.client.post('/api/queue', json=first)
+        second_entry = self.client.post('/api/queue', json=second).json()
+        moved = self.client.post('/api/queue/next', json=second).json()
+        self.assertTrue(moved['moved'])
+        self.assertEqual(moved['item']['key'], second_entry['key'])
+        self.assertEqual(self.main.state.upcoming[0]['key'], second_entry['key'])
+        already = self.client.post('/api/queue/next', json=second).json()
+        self.assertTrue(already['already_next'])
+        self.assertEqual(len(self.main.state.upcoming), 2)
+
+    def test_recent_defaults_to_ten_cached_played_songs(self):
+        songs = {f'{number:011d}': {'id': f'{number:011d}', 'artist': 'A', 'title': str(number)}
+                 for number in range(12)}
+        self.main.state.played = {video_id: float(number) for number, video_id in enumerate(songs)}
+        with patch.object(self.main, 'prepared_songs', return_value=songs):
+            result = self.client.get('/api/recent').json()
+            self.assertEqual(len(result), 10)
+            self.assertEqual([song['id'] for song in result], list(reversed(list(songs)[-10:])))
 
     def test_unicode_input_validation_and_static_pages(self):
         for route in ('/', '/tv', '/remote', '/static/tv.js', '/api/qr.svg'):

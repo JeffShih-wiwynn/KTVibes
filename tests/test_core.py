@@ -230,21 +230,41 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             await state.control({'action': 'lyric_mode', 'value': 'sideways'})
         self.assertEqual(state.snapshot()['lyric_mode'], 'two')
 
-    async def test_duplicates_rejected_until_song_leaves_stage(self):
+    async def test_duplicate_queue_entries_are_allowed_and_have_unique_keys(self):
         state = State()
-        a = await state.add('abcdefghijk', 'A', 'First')
-        with self.assertRaises(ValueError):
-            await state.add('abcdefghijk', 'A', 'Again')
+        a = await state.add('abcdefghijk', 'A', 'First', allow_duplicate=True)
+        b = await state.add('abcdefghijk', 'A', 'Again', allow_duplicate=True)
+        self.assertNotEqual(a['key'], b['key'])
+        self.assertEqual([item['id'] for item in state.upcoming], ['abcdefghijk', 'abcdefghijk'])
         a['status'] = 'ready'
         state.promote()
         self.assertIs(state.current, a)
         self.assertIn('abcdefghijk', state.played)
+        b['status'] = 'ready'
         await state.control({'action': 'offset', 'delta': .5})
+        await state.control({'action': 'skip'})
+        self.assertIs(state.current, b)
         await state.control({'action': 'skip'})
         self.assertIsNone(state.current)
         self.assertEqual(state.offset, 0)
-        b = await state.add('abcdefghijk', 'A', 'Encore')
-        self.assertNotEqual(a['key'], b['key'])
+        c = await state.add('abcdefghijk', 'A', 'Encore', allow_duplicate=True)
+        self.assertNotIn(c, (a, b))
+
+    async def test_add_next_moves_an_upcoming_copy_or_adds_a_current_song_repeat(self):
+        state = State()
+        first = await state.add('abcdefghijk', 'A', 'First')
+        second = await state.add('12345678901', 'B', 'Second')
+        moved = await state.add_next(second['id'], second['artist'], second['title'])
+        self.assertTrue(moved['moved'])
+        self.assertEqual([item['key'] for item in state.upcoming], [second['key'], first['key']])
+        already = await state.add_next(second['id'], second['artist'], second['title'])
+        self.assertTrue(already['already_next'])
+        second['status'] = 'ready'
+        state.promote()
+        repeated = await state.add_next(second['id'], second['artist'], second['title'])
+        self.assertTrue(repeated['added'])
+        self.assertEqual(state.upcoming[0]['id'], second['id'])
+        self.assertNotEqual(state.upcoming[0]['key'], second['key'])
 
     async def test_queue_and_history_survive_restart(self):
         import tempfile
@@ -324,16 +344,18 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await state.control({'action': 'undo'})
         await state.control({'action': 'remove', 'key': a['key']})
-        await state.add('abcdefghijk', 'A', 'Again')
-        with self.assertRaises(ValueError):  # the song was queued again meanwhile
-            await state.control({'action': 'undo'})
+        again = await state.add('abcdefghijk', 'A', 'Again', allow_duplicate=True)
+        await state.control({'action': 'undo'})
+        self.assertEqual([item['key'] for item in state.upcoming], [a['key'], b['key'], again['key']])
 
     async def test_failed_song_can_be_retried(self):
         state = State()
         a = await state.add('abcdefghijk', 'A', 'First')
+        duplicate = await state.add('abcdefghijk', 'A', 'Duplicate', allow_duplicate=True)
         a['status'], a['error'] = 'error', 'HTTP 403'
         await state.control({'action': 'retry', 'key': a['key']})
         self.assertEqual((a['status'], a['error']), ('queued', None))
+        self.assertIn(duplicate, state.upcoming)
 
     async def test_lyrics_go_to_each_tv_once_per_song(self):
         class Socket:
@@ -506,8 +528,8 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             await state.control({'action': 'reserve', 'number': 10001})
             self.assertEqual((state.upcoming[0]['id'], state.upcoming[0]['title']), ('aaaaaaaaaaa', '좋은 날'))
             self.assertIn((tv, {'type': 'reserved', 'number': 10001}), sent)
-            with self.assertRaises(ValueError):
-                await state.control({'action': 'reserve', 'number': 10001})  # already queued
+            with self.assertRaisesRegex(ValueError, 'already in the queue'):
+                await state.control({'action': 'reserve', 'number': 10001})
             with self.assertRaisesRegex(ValueError, 'No song 10099'):
                 await state.control({'action': 'reserve', 'number': 10099})
             self.assertEqual(len(state.upcoming), 1)
