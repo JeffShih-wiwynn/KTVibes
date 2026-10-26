@@ -15,6 +15,65 @@ class LyricsTests(unittest.TestCase):
         self.assertEqual(parse_lrc('[ar:周杰倫]\n[offset:-500]\n[00:02.50][00:04.000]你好 안녕\n[00:01.00]'),
                          [{'t': .5, 'text': ''}, {'t': 2.0, 'text': '你好 안녕'}, {'t': 3.5, 'text': '你好 안녕'}])
 
+    def test_lrc_display_text_preserves_order_paragraphs_and_safe_bracket_text(self):
+        from ktvibes.lyrics import lrc_display_text
+        raw = '[ti:晴天]\n[ar:周杰倫]\n[00:03.00]第二行 <00:03.20>你好\n\n[00:01.00]v1: [chorus]第一行'
+        self.assertEqual(lrc_display_text(raw), '第二行 你好\n\n[chorus]第一行')
+
+    def test_plain_lyrics_candidate_matching_is_conservative_and_duration_aware(self):
+        from ktvibes.lyrics import plain_match_score
+        candidate = {'id': 4, 'artistName': '周杰倫', 'trackName': '晴天', 'duration': 269, 'plainLyrics': '天青色等煙雨'}
+        self.assertIsNotNone(plain_match_score(candidate, '周杰倫', '晴天', 270))
+        self.assertIsNone(plain_match_score({**candidate, 'artistName': '其他歌手'}, '周杰倫', '晴天', 270))
+        self.assertIsNone(plain_match_score({**candidate, 'trackName': '夜曲'}, '周杰倫', '晴天', 270))
+        self.assertIsNone(plain_match_score(candidate, '周杰倫', '晴天', 400))
+        self.assertIsNotNone(plain_match_score(candidate, '周杰倫', '晴天', None))
+        self.assertIsNone(plain_match_score({**candidate, 'plainLyrics': 'x' * 200_001}, '周杰倫', '晴天', None))
+
+    def test_plain_lookup_accepts_plain_only_records_and_ranks_deterministically(self):
+        import asyncio
+        from unittest.mock import patch
+        from ktvibes import lyrics
+        records = [
+            {'id': 8, 'artistName': '周杰倫', 'trackName': '晴天', 'duration': 270, 'plainLyrics': 'first'},
+            {'id': 2, 'artistName': '周杰倫', 'trackName': '晴天', 'duration': 270, 'plainLyrics': 'second'},
+            {'id': 1, 'artistName': '周杰倫', 'trackName': '晴天', 'duration': 270, 'syncedLyrics': '[00:01.00]synced only'},
+        ]
+        class Response:
+            def json(self): return records
+            def raise_for_status(self): pass
+        class Client:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def get(self, *args, **kwargs): return Response()
+        with patch.object(lyrics, 'lrclib', return_value=Client()):
+            result = asyncio.run(lyrics.plain_record('周杰倫', '晴天', 270))
+        self.assertEqual(result, {'id': 2, 'text': 'second'})
+
+    def test_mixed_search_returns_one_record_with_both_formats_and_filters_plain_mismatch(self):
+        import asyncio
+        from unittest.mock import patch
+        from ktvibes import lyrics
+        records = [
+            {'id': 4, 'artistName': '周杰倫', 'trackName': '晴天', 'duration': 270,
+             'syncedLyrics': '[00:01.00]天青色', 'plainLyrics': '天青色等煙雨'},
+            {'id': 5, 'artistName': '周杰倫', 'trackName': '晴天', 'duration': None,
+             'plainLyrics': '繁體中文 lyrics'},
+            {'id': 6, 'artistName': '其他', 'trackName': '晴天', 'plainLyrics': '錯誤歌手'},
+            {'id': 7, 'artistName': '周杰倫', 'trackName': '晴天'},
+        ]
+        class Response:
+            def json(self): return records
+            def raise_for_status(self): pass
+        class Client:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def get(self, *args, **kwargs): return Response()
+        with patch.object(lyrics, 'lrclib', return_value=Client()):
+            result = asyncio.run(lyrics.mixed_search('晴天', '周杰倫', '晴天', None))
+        self.assertEqual([record['id'] for record in result], [4, 5])
+        self.assertEqual((bool(result[0].get('syncedLyrics')), result[0]['plainLyrics']), (True, '天青色等煙雨'))
+
     def test_title_metadata_preserves_original_script(self):
         self.assertEqual(parse_title('周杰倫 - 晴天 (Official MV)'), {'artist': '周杰倫', 'title': '晴天'})
         self.assertEqual(parse_title('아이유 - 좋은 날 (Official Audio)'), {'artist': '아이유', 'title': '좋은 날'})
@@ -72,6 +131,16 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         state.guide = 'hangul'  # a mode this Korean song has nothing for
         await state.control({'action': 'guide', 'value': 'cycle'})
         self.assertEqual(state.guide, 'latin')
+
+    async def test_kana_guide_is_available_only_when_lyrics_have_kana_data(self):
+        state = State()
+        a = await state.add('abcdefghijk', 'A', '日本語')
+        a['status'] = 'ready'
+        a['lyrics'] = [{'t': 0, 'text': '世界', 'units': [['世', 0, 1, '', '', '', 'せかい'], ['界', 1, 2, '', '', '', '']]}]
+        state.promote()
+        self.assertIn('kana', state.guides())
+        await state.control({'action': 'guide', 'value': 'kana'})
+        self.assertEqual(state.guide, 'kana')
 
     async def test_breather_only_between_songs(self):
         import time
@@ -314,6 +383,28 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(state.current, queued)
             self.assertEqual(state.offset, -.1)
 
+    async def test_song_keyed_timing_update_targets_current_after_queue_promotion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            state = State()
+            state.restore(root / 'queue.json')
+            for video_id in ('aaaaaaaaaaa', 'bbbbbbbbbbb'):
+                song_folder = root / video_id
+                song_folder.mkdir()
+                (song_folder / 'meta.json').write_text(json.dumps({'lyric_offset': 0}), encoding='utf-8')
+            first = await state.add('aaaaaaaaaaa', 'A', 'First')
+            second = await state.add('bbbbbbbbbbb', 'B', 'Second')
+            first['status'] = second['status'] = 'ready'
+            state.promote()
+            await state.set_queue_offset(second['key'], .1)
+            await state.control({'action': 'skip'})
+            self.assertIs(state.current, second)
+            await state.set_queue_offset(second['key'], .6)
+            self.assertEqual(state.offset, .6)
+            self.assertEqual(json.loads((root / 'bbbbbbbbbbb' / 'meta.json').read_text(encoding='utf-8'))['lyric_offset'], .6)
+            with self.assertRaises(ValueError):
+                await state.set_queue_offset(first['key'], 1.0)
+
     async def test_classic_room_timer_holds_the_next_song_until_time_is_added(self):
         state = State()
         clock = unittest.mock.patch('ktvibes.queue.time.time')
@@ -545,6 +636,14 @@ class LyricsMatchTests(unittest.TestCase):
         lines = [{'t': 0, 'text': '世界', 'units': [['世', 0, 1], ['界', 1, 2]]}, {'t': 2, 'text': 'ありがとう', 'units': [[c, 2, 3] for c in 'ありがとう']}]
         lines = lyrics.add_pinyin(lyrics.add_romaji(lines))
         self.assertEqual(lines[0]['units'][0][3], 'sekai')  # a kanji-only line in a Japanese song is still Japanese
+
+    def test_japanese_kana_guide_uses_hiragana_readings(self):
+        from ktvibes import guides, lyrics
+        units = [['世', 0, 1], ['界', 1, 2]]
+        lines = [{'t': 0, 'text': '世界', 'units': units}, {'t': 1, 'text': 'ありがとう', 'units': [[c, 1, 2] for c in 'ありがとう']}]
+        lines = lyrics.add_kana(lyrics.add_jyutping(guides.add_hangul(lyrics.add_korean_romanization(lyrics.add_pinyin(lyrics.add_romaji(lines))))))
+        self.assertEqual([unit[6] for unit in units], ['せかい', ''])
+        self.assertEqual(lyrics.kana(['き', 'ゃ', 'っ', 'と']), ['きゃ', '', 'っ', 'と'])
 
     def test_original_script_beats_romanized_record(self):
         from ktvibes import lyrics

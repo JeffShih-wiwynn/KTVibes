@@ -4,6 +4,8 @@ import io
 import json
 import os
 import shutil
+import time
+import uuid
 from pathlib import Path
 import socket
 import math
@@ -20,6 +22,71 @@ ROOT = Path(__file__).resolve().parent.parent
 CACHE = Path(os.environ.get("KTVIBES_CACHE", ROOT / "cache"))
 PORT = int(os.environ.get("KTVIBES_PORT", 8765))
 state = State()
+_plain_lookups: dict[tuple[str, str], asyncio.Task] = {}
+_plain_errors: dict[tuple[str, str], float] = {}
+_plain_selection_seq: dict[str, int] = {}
+PLAIN_MISSING_TTL = 7 * 86400
+PLAIN_ERROR_COOLDOWN = 30
+
+def _plain_identity(artist: str, title: str) -> list[str]:
+    return [lyrics.plain_identity(artist), lyrics.plain_identity(title)]
+
+def _plain_cache_write(path: Path, value: dict) -> None:
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        with suppress(OSError):
+            temporary.unlink()
+
+def _viewer_target(key: str):
+    target = state.current if state.current and state.current.get("key") == key else next(
+        (item for item in state.upcoming if item.get("key") == key), None)
+    if target is None:
+        raise HTTPException(404, "Lyrics target is no longer available")
+    if not youtube.ID.fullmatch(target.get("id") or ""):
+        raise HTTPException(404, "Song not found")
+    return target
+
+def _cached_synced(folder: Path, target: dict) -> str:
+    path = folder / "lyrics.lrc"
+    if not path.is_file():
+        return ""
+    try:
+        raw = path.read_text(encoding="utf-8")
+        meta_path = folder / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    except (OSError, ValueError):
+        return ""
+    saved = meta.get("lyrics_identity")
+    if isinstance(saved, (list, tuple)) and len(saved) >= 2 and _plain_identity(str(saved[0]), str(saved[1])) != _plain_identity(str(target.get("artist") or ""), str(target.get("title") or "")):
+        return ""
+    return raw if lyrics.STAMP.search(raw) and lyrics.lrc_display_text(raw).strip() else ""
+
+def _plain_cache_read(path: Path, identity: list[str], now: float) -> dict | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    if value.get("identity") != identity:
+        return None
+    status = value.get("status")
+    if status == "ready" and isinstance(value.get("text"), str) and value["text"].strip() and len(value["text"].encode("utf-8")) <= 200_000:
+        return value
+    if status == "missing":
+        try:
+            if now - float(value.get("checked_at") or 0) < PLAIN_MISSING_TTL:
+                return value
+        except (TypeError, ValueError):
+            return None
+    return None
+
+def _viewer_result(target: dict, status: str, source: str | None = None, text: str = "", record_id=None) -> dict:
+    return {"key": target["key"], "id": target["id"], "artist": target.get("artist", ""), "title": target.get("title", ""),
+            "status": status, "source": source, "text": text, "record_id": record_id}
 
 @asynccontextmanager
 async def lifespan(app):
@@ -70,6 +137,72 @@ async def remote():
 @app.get("/api/state")
 async def get_state():
     return state.snapshot()
+
+@app.get("/api/lyrics/view/{target_key}")
+async def lyrics_view(target_key: str):
+    """Read cached synced lyrics or an independently cached LRCLIB plain-lyrics fallback."""
+    target = _viewer_target(target_key)
+    video_id = target["id"]
+    folder = CACHE / video_id
+    identity = _plain_identity(target.get("artist", ""), target.get("title", ""))
+    lookup_key = (video_id, json.dumps(identity, ensure_ascii=False))
+    plain_path = folder / "plain_lyrics.json"
+    duration = target.get("duration")
+    async with state.cache_lock(video_id):
+        folder.mkdir(parents=True, exist_ok=True)
+        raw = _cached_synced(folder, target)
+        if raw:
+            return _viewer_result(target, "ready", "synced", lyrics.lrc_display_text(raw))
+        cached = _plain_cache_read(plain_path, identity, time.time())
+        if cached:
+            if cached["status"] == "ready":
+                return _viewer_result(target, "ready", "plain", cached["text"], cached.get("record_id"))
+            return _viewer_result(target, "missing")
+        if time.time() - _plain_errors.get(lookup_key, 0) < PLAIN_ERROR_COOLDOWN:
+            return _viewer_result(target, "error")
+        if not duration:
+            try:
+                duration = json.loads((folder / "meta.json").read_text(encoding="utf-8")).get("duration")
+            except (OSError, ValueError):
+                duration = None
+
+    task = _plain_lookups.get(lookup_key)
+    if task is None or task.done():
+        task = asyncio.create_task(lyrics.plain_record(target.get("artist", ""), target.get("title", ""), duration))
+        _plain_lookups[lookup_key] = task
+        task.add_done_callback(lambda done, key=lookup_key: _plain_lookups.pop(key, None) if _plain_lookups.get(key) is done else None)
+    try:
+        record = await asyncio.wait_for(asyncio.shield(task), timeout=45)
+    except Exception:
+        _plain_errors[lookup_key] = time.time()
+        if _plain_lookups.get(lookup_key) is task:
+            _plain_lookups.pop(lookup_key, None)
+        return _viewer_result(target, "error")
+    if _plain_lookups.get(lookup_key) is task:
+        _plain_lookups.pop(lookup_key, None)
+
+    current_target = _viewer_target(target_key)
+    if current_target.get("id") != video_id or _plain_identity(current_target.get("artist", ""), current_target.get("title", "")) != identity:
+        raise HTTPException(409, "Lyrics target changed; please reopen the viewer")
+    async with state.cache_lock(video_id):
+        raw = _cached_synced(folder, current_target)
+        if raw:
+            return _viewer_result(current_target, "ready", "synced", lyrics.lrc_display_text(raw))
+        # Another request may have committed a result while this request awaited LRCLIB.
+        cached = _plain_cache_read(plain_path, identity, time.time())
+        if cached:
+            if cached["status"] == "ready":
+                return _viewer_result(current_target, "ready", "plain", cached["text"], cached.get("record_id"))
+            return _viewer_result(current_target, "missing")
+        if record is None:
+            _plain_cache_write(plain_path, {"identity": identity, "record_id": None, "status": "missing", "checked_at": time.time(), "text": ""})
+            return _viewer_result(current_target, "missing")
+        text = record.get("text") if isinstance(record, dict) else None
+        if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > 200_000:
+            return _viewer_result(current_target, "missing")
+        value = {"identity": identity, "record_id": record.get("id"), "status": "ready", "checked_at": time.time(), "text": text.strip()}
+        _plain_cache_write(plain_path, value)
+        return _viewer_result(current_target, "ready", "plain", value["text"], value["record_id"])
 
 @app.get("/api/suggest")
 async def suggest(q: str = Query(min_length=1, max_length=200)):
@@ -172,8 +305,118 @@ async def lyric_options(video_id: str, q: str = Query("", max_length=200)):
                         "difference": round(float(c.get("duration") or 0) - meta["duration"])})
     return options
 
+@app.get("/api/lyrics/choices/{target_key}")
+async def lyric_choices(target_key: str, q: str = Query(min_length=1, max_length=200)):
+    """Mixed-format manual search; the legacy song lyrics endpoint remains synced-only."""
+    target = _viewer_target(target_key)
+    video_id = target["id"]
+    folder = CACHE / video_id
+    identity = _plain_identity(target.get("artist", ""), target.get("title", ""))
+    duration = target.get("duration")
+    synced_raw = ""
+    plain = None
+    saved_id = None
+    has_saved_id = False
+    async with state.cache_lock(video_id):
+        if folder.exists():
+            synced_raw = _cached_synced(folder, target)
+            plain = _plain_cache_read(folder / "plain_lyrics.json", identity, time.time())
+            try:
+                meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+                saved_id = meta.get("lyrics_record_id")
+                has_saved_id = saved_id is not None and "lyrics_record_id" in meta
+                duration = duration or meta.get("duration")
+            except (OSError, ValueError):
+                pass
+    try:
+        found = await lyrics.mixed_search(q.strip(), target.get("artist", ""), target.get("title", ""), duration)
+    except Exception as exc:
+        raise HTTPException(502, f"Lyrics lookup failed: {exc}") from exc
+    results = []
+    legacy_matched = False
+    for candidate in found:
+        raw = candidate.get("syncedLyrics") or ""
+        synced_available = bool(lyrics.STAMP.search(raw))
+        synced_lines = [line["text"] for line in lyrics.parse_lrc(raw) if line.get("text")] if synced_available else []
+        if has_saved_id:
+            synced_current = synced_available and candidate.get("id") == saved_id
+        else:
+            synced_current = synced_available and not legacy_matched and raw == synced_raw and bool(synced_raw)
+            legacy_matched = legacy_matched or synced_current
+        plain_text = candidate.get("plainLyrics")
+        plain_available = lyrics.plain_match_score(candidate, target.get("artist", ""), target.get("title", ""), duration) is not None
+        plain_selected = bool(plain and plain.get("status") == "ready" and candidate.get("id") == plain.get("record_id"))
+        try:
+            difference = round(float(candidate.get("duration") or 0) - float(duration)) if duration else None
+        except (TypeError, ValueError):
+            difference = None
+        results.append({
+            "id": candidate.get("id"), "track": candidate.get("trackName"), "artist": candidate.get("artistName"),
+            "album": candidate.get("albumName"), "difference": difference,
+            "formats": {
+                "synced": {"available": synced_available, "current": synced_current,
+                           "language": lyrics.LANGUAGES[lyrics.script(raw)] if synced_available else None,
+                           "lines": len(synced_lines), "preview": synced_lines[:2]},
+                "plain": {"available": plain_available, "selected": plain_selected,
+                          "active": plain_selected and not bool(synced_raw),
+                          "preview": (plain_text.strip().splitlines()[:2] if plain_available else []),
+                          "lines": len(plain_text.strip().splitlines()) if plain_available else 0}
+            }
+        })
+    return {"key": target_key, "id": video_id, "synced_active": bool(synced_raw),
+            "plain_record_id": plain.get("record_id") if plain and plain.get("status") == "ready" else None,
+            "plain_origin": plain.get("origin") if plain and plain.get("status") == "ready" else None,
+            "results": results}
+
 class LyricChoice(BaseModel):
     id: int
+
+@app.post("/api/lyrics/plain/{target_key}")
+async def choose_plain_lyrics(target_key: str, choice: LyricChoice):
+    """Persist a Viewer-only fallback without touching synced lyrics or playback state."""
+    target = _viewer_target(target_key)
+    video_id = target["id"]
+    identity = _plain_identity(target.get("artist", ""), target.get("title", ""))
+    folder = CACHE / video_id
+    duration = target.get("duration")
+    async with state.cache_lock(video_id):
+        if not duration:
+            try:
+                duration = json.loads((folder / "meta.json").read_text(encoding="utf-8")).get("duration")
+            except (OSError, ValueError):
+                pass
+    request_seq = _plain_selection_seq.get(target_key, 0) + 1
+    _plain_selection_seq[target_key] = request_seq
+    try:
+        chosen = await lyrics.record(choice.id)
+    except Exception as exc:
+        raise HTTPException(502, f"Lyrics lookup failed: {exc}") from exc
+    if not isinstance(chosen, dict) or chosen.get("id") != choice.id:
+        raise HTTPException(404, "That lyrics version is no longer available")
+    text = chosen.get("plainLyrics")
+    if lyrics.plain_match_score(chosen, target.get("artist", ""), target.get("title", ""), duration) is None:
+        raise HTTPException(422, "That plain lyrics record does not match this song")
+    # Re-resolve after the network call: promotion with the same key is safe; removal or a
+    # different current song is not. Latest request started for this target wins the race.
+    current_target = _viewer_target(target_key)
+    if current_target.get("id") != video_id or _plain_identity(current_target.get("artist", ""), current_target.get("title", "")) != identity:
+        raise HTTPException(409, "Lyrics target changed while saving")
+    if _plain_selection_seq.get(target_key) != request_seq:
+        raise HTTPException(409, "A newer lyrics selection is being saved")
+    async with state.cache_lock(video_id):
+        current_target = _viewer_target(target_key)
+        if current_target.get("id") != video_id or _plain_identity(current_target.get("artist", ""), current_target.get("title", "")) != identity:
+            raise HTTPException(409, "Lyrics target changed while saving")
+        if _plain_selection_seq.get(target_key) != request_seq:
+            raise HTTPException(409, "A newer lyrics selection is being saved")
+        folder.mkdir(parents=True, exist_ok=True)
+        value = {"identity": identity, "record_id": choice.id, "status": "ready", "checked_at": time.time(),
+                 "text": text.strip(), "origin": "manual"}
+        _plain_cache_write(folder / "plain_lyrics.json", value)
+        synced_raw = _cached_synced(folder, current_target)
+        if synced_raw:
+            return {"saved": choice.id, "status": "ready", "source": "synced", "active": False}
+        return {"saved": choice.id, "status": "ready", "source": "plain", "active": True, "text": value["text"]}
 
 class OffsetChoice(BaseModel):
     value: float
@@ -243,7 +486,8 @@ async def select_lyrics(video_id: str, choice: LyricChoice, target=None):
         offset = float(latest.get("lyric_offset") or 0)
 
     if target is not None:
-        target.update(lyrics=lines, lyrics_status="ready", lyrics_error=None, offset=offset)
+        target.update(lyrics=lines, lyrics_status="ready", lyrics_error=None, offset=offset,
+                      lyrics_rev=target.get("lyrics_rev", 0) + (1 if changed else 0))
     if state.current and state.current["id"] == video_id:
         state.current.update(lyrics=lines, lyrics_status="ready", lyrics_error=None,
                              lyrics_rev=state.current.get("lyrics_rev", 0) + (1 if changed else 0))
@@ -278,8 +522,15 @@ async def queued_lyrics(queue_key: str):
 
 @app.post("/api/queue/{queue_key}/lyrics")
 async def choose_queued_lyrics(queue_key: str, choice: LyricChoice):
-    item = queue_item(queue_key)
-    return await select_lyrics(item["id"], choice, item)
+    item = next((item for item in state.upcoming if item["key"] == queue_key), None)
+    if item is not None:
+        if item["status"] != "ready":
+            raise HTTPException(409, "Lyrics settings are not ready yet")
+        return await select_lyrics(item["id"], choice, item)
+    current = state.current if state.current and state.current.get("key") == queue_key else None
+    if current is not None:
+        return await select_lyrics(current["id"], choice)
+    raise HTTPException(404, "Queue song not found")
 
 @app.patch("/api/queue/{queue_key}/offset")
 async def set_queued_offset(queue_key: str, choice: OffsetChoice):

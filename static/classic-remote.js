@@ -76,7 +76,7 @@ export function classicRemote({send,toast,haptic,swipeable}){
  $('hs-guide').onclick=()=>{haptic(6);send({action:'guide',value:'cycle'});};
  for(const b of document.querySelectorAll('[data-mix]'))b.onclick=()=>{const action=b.dataset.mix,value=Math.round(Math.max(0,Math.min(1,(state?.[action]??0)+Number(b.dataset.step)))*10)/10;haptic(6);send({action,value});};
  const meter=(node,value)=>node.replaceChildren(...Array.from({length:5},(_,i)=>el('i',undefined,i<Math.round((value??0)*5)?'on':'')));
- function showHandset(){if(!state)return;const c=!!state.current;$('hs-play').disabled=$('hs-skip').disabled=!c;$('hs-play').classList.toggle('paused',!state.playing);$('hs-play').querySelector('span').textContent=state.playing?'일시정지':'재생';meter($('hs-music'),state.music);meter($('hs-vocal'),state.vocal);}
+ function showHandset(){if(!state)return;const c=!!state.current;$('hs-play').disabled=$('hs-skip').disabled=!c;$('hs-play').classList.toggle('paused',!state.playing);$('hs-play').querySelector('span').textContent=state.playing?'일시정지':'재생';$('hs-guide').querySelector('b').textContent={off:'–',latin:'Aa',jyutping:'粵',hangul:'가',kana:'あ'}[state.guide]||'Aa';$('hs-guide').setAttribute('aria-label',`Pronunciation guide: ${state.guide}`);meter($('hs-music'),state.music);meter($('hs-vocal'),state.vocal);}
  // The songbook: 신곡, the existing Recent list (최근), then every song A–Z by its title's first sound.
  let songs=[];
  const INITIALS='가가나다다라마바바사사아자자차카타파하';  // the 19 leading consonants, doubled ones folded

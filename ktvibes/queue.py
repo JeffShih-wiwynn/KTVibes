@@ -13,7 +13,7 @@ def following(options, current):
     """The option after `current`, wrapping round: what a "cycle" control switches to."""
     return options[(options.index(current) + 1) % len(options)]
 
-GUIDES = ("off", "latin", "jyutping", "hangul")
+GUIDES = ("off", "latin", "jyutping", "hangul", "kana")
 REACTIONS = ("👏", "🔥", "🎉", "💚")  # cheers a remote can float up on the TV
 HISTORY = 200  # remembered plays, for the remote's "Recent" list
 UNDO_SECONDS = 15  # how long a removal can be taken back
@@ -68,7 +68,7 @@ class State:
         units = [u for line in (self.current or {}).get("lyrics", []) for u in line.get("units") or []]
         if not self.current:
             return list(GUIDES)
-        return ["off"] + [mode for index, mode in ((3, "latin"), (5, "jyutping"), (4, "hangul")) if any(len(u) > index and u[index] for u in units)]
+        return ["off"] + [mode for index, mode in ((3, "latin"), (5, "jyutping"), (4, "hangul"), (6, "kana")) if any(len(u) > index and u[index] for u in units)]
 
     def time_up(self):
         return self.room_ends is not None and time.time() >= self.room_ends
@@ -206,8 +206,10 @@ class State:
             pass
 
     async def set_queue_offset(self, key, value):
-        """Set a ready upcoming song's cache-backed lyric offset."""
+        """Set a ready queue/current song's cache-backed lyric offset by stable key."""
         item = next((i for i in self.upcoming if i["key"] == key), None)
+        if item is None and self.current and self.current.get("key") == key:
+            item = self.current
         if item is None:
             raise ValueError("Queue song not found")
         if item["status"] != "ready":
@@ -218,6 +220,12 @@ class State:
         meta_path = self.path.parent / item["id"] / "meta.json"
         try:
             async with self.cache_lock(item["id"]):
+                live = self.current if self.current and self.current.get("key") == key else next(
+                    (candidate for candidate in self.upcoming if candidate.get("key") == key), None)
+                if live is None or live.get("id") != item["id"]:
+                    raise ValueError("Queue song not found")
+                if live["status"] != "ready":
+                    raise ValueError("Lyrics settings are not ready yet")
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 meta["lyric_offset"] = value
                 temporary = meta_path.with_name(f".meta.{uuid.uuid4().hex}.tmp")
@@ -225,8 +233,10 @@ class State:
                 temporary.replace(meta_path)
         except (OSError, ValueError) as exc:
             raise ValueError("Unable to save lyric offset") from exc
-        item["offset"] = value
-        return item
+        live["offset"] = value
+        if self.current is live:
+            self.offset = value
+        return live
 
     def take_back(self):
         """Put the last removed song back where it was, while the removal is still recent."""

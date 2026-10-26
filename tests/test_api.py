@@ -4,7 +4,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 AVAILABLE = all(importlib.util.find_spec(name) for name in ('fastapi', 'httpx', 'soundfile', 'qrcode'))
 
@@ -15,6 +15,8 @@ class APITests(unittest.TestCase):
         from ktvibes import main
         from ktvibes.queue import State
         self.main = main
+        main._plain_lookups.clear(); main._plain_errors.clear()
+        main._plain_selection_seq.clear()
         self.temp = tempfile.TemporaryDirectory()
         async def idle_worker(*args):
             await asyncio.Event().wait()
@@ -63,6 +65,232 @@ class APITests(unittest.TestCase):
             self.assertEqual(self.client.post('/api/songs/aaaaaaaaaaa/lyrics', json={'id': 7}).status_code, 200)
         self.assertEqual((folder / 'lyrics.lrc').read_text(encoding='utf-8'), record['syncedLyrics'])
         self.assertEqual(json.loads((folder / 'meta.json').read_text(encoding='utf-8'))['lyrics_identity'], ['Simple Plan', 'Perfect'])
+
+    def test_mixed_lyrics_choices_return_one_typed_record_and_preserve_synced_identity(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', '周杰倫', '晴天')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        raw = '[00:01.00]天青色'
+        (folder / 'lyrics.lrc').write_text(raw, encoding='utf-8')
+        (folder / 'meta.json').write_text(json.dumps({'artist': '周杰倫', 'title': '晴天', 'duration': 270,
+                                                       'lyrics_record_id': 11}), encoding='utf-8')
+        (folder / 'plain_lyrics.json').write_text(json.dumps({'identity': ['周杰倫', '晴天'], 'record_id': 22,
+            'status': 'ready', 'checked_at': 1, 'text': '天青色等煙雨', 'origin': 'manual'}, ensure_ascii=False), encoding='utf-8')
+        records = [{'id': 11, 'trackName': '晴天', 'artistName': '周杰倫', 'duration': 270,
+                    'syncedLyrics': raw, 'plainLyrics': '天青色等煙雨'},
+                   {'id': 22, 'trackName': '晴天', 'artistName': '周杰倫', 'plainLyrics': '天青色等煙雨'}]
+        async def search(*args): return records
+        with patch.object(self.main.lyrics, 'mixed_search', search):
+            response = self.client.get(f"/api/lyrics/choices/{item['key']}", params={'q': '晴天'})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload['synced_active'])
+        self.assertEqual([entry['id'] for entry in payload['results']], [11, 22])
+        self.assertEqual(sum(entry['formats']['synced']['current'] for entry in payload['results']), 1)
+        self.assertTrue(payload['results'][0]['formats']['plain']['available'])
+        self.assertTrue(payload['results'][1]['formats']['plain']['selected'])
+        self.assertFalse(payload['results'][1]['formats']['plain']['active'])
+
+    def test_plain_selection_is_viewer_only_allowed_while_processing_and_keeps_synced_cache(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Cody・Lee', '我愛你')
+        self.main.state.upcoming.append(item)  # still processing
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        raw = '[00:01.00]Synced lyric'
+        metadata = {'artist': 'Cody・Lee', 'title': '我愛你', 'duration': 200, 'lyrics_record_id': 71,
+                    'lyrics_revision': 3, 'lyrics_source': 'manual', 'lyric_offset': 1.2}
+        meta_path = folder / 'meta.json'; meta_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding='utf-8')
+        lrc_path = folder / 'lyrics.lrc'; lrc_path.write_text(raw, encoding='utf-8')
+        record = {'id': 9, 'artistName': 'Cody・Lee', 'trackName': '我愛你', 'plainLyrics': '日本語と繁體中文 안녕'}
+        with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value=record):
+            response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 9})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((response.json()['source'], response.json()['active']), ('synced', False))
+        cache = json.loads((folder / 'plain_lyrics.json').read_text(encoding='utf-8'))
+        self.assertEqual((cache['record_id'], cache['text'], cache['origin']), (9, record['plainLyrics'], 'manual'))
+        self.assertEqual(json.loads(meta_path.read_text(encoding='utf-8')), metadata)
+        self.assertEqual(lrc_path.read_text(encoding='utf-8'), raw)
+        self.assertFalse((folder / 'timed.json').exists())
+
+    def test_plain_selection_is_shown_when_no_synced_cache_and_rejects_stale_target(self):
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Cody・Lee', '我愛你')
+        self.main.state.upcoming.append(item)
+        (Path(self.temp.name) / item['id']).mkdir()
+        record = {'id': 10, 'artistName': 'Cody・Lee', 'trackName': '我愛你', 'plainLyrics': '愛してる'}
+        with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value=record):
+            response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 10})
+        self.assertEqual((response.status_code, response.json()['source'], response.json()['text']), (200, 'plain', '愛してる'))
+        cache_path = Path(self.temp.name) / item['id'] / 'plain_lyrics.json'
+        self.assertTrue(cache_path.is_file())
+        self.main.state.upcoming.remove(item)
+        self.assertEqual(self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 10}).status_code, 404)
+
+    def test_plain_selection_rejects_unrelated_lrclib_record(self):
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        self.main.state.upcoming.append(item)
+        with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value={
+            'id': 12, 'artistName': 'Other', 'trackName': 'Different', 'plainLyrics': 'wrong'}):
+            response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 12})
+        self.assertEqual(response.status_code, 422)
+        self.assertFalse((Path(self.temp.name) / item['id'] / 'plain_lyrics.json').exists())
+
+    def test_manual_plain_cache_is_reused_without_automatic_lookup(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Cody・Lee', '我愛你')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        (folder / 'plain_lyrics.json').write_text(json.dumps({'identity': ['codylee', '我愛你'], 'record_id': 55,
+            'status': 'ready', 'checked_at': 1, 'text': '手動選取的日本語', 'origin': 'manual'}, ensure_ascii=False), encoding='utf-8')
+        with patch.object(self.main.lyrics, 'plain_record', new_callable=AsyncMock, side_effect=AssertionError('manual cache must win')):
+            first = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+            second = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+        self.assertEqual((first['record_id'], second['text'], first['source']), (55, '手動選取的日本語', 'plain'))
+
+    def test_newer_manual_plain_selection_wins_concurrent_request_race(self):
+        import json
+        from fastapi import HTTPException
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Cody・Lee', '我愛你')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        release_old = asyncio.Event()
+        async def record(record_id):
+            if record_id == 1:
+                await release_old.wait()
+                text = 'older selection'
+            else:
+                text = 'newer selection'
+                release_old.set()
+            return {'id': record_id, 'artistName': 'Cody・Lee', 'trackName': '我愛你', 'plainLyrics': text}
+        async def run():
+            with patch.object(self.main.lyrics, 'record', record):
+                old = asyncio.create_task(self.main.choose_plain_lyrics(item['key'], self.main.LyricChoice(id=1)))
+                await asyncio.sleep(0)
+                new = await self.main.choose_plain_lyrics(item['key'], self.main.LyricChoice(id=2))
+                try:
+                    await old
+                except HTTPException as exc:
+                    self.assertEqual(exc.status_code, 409)
+                else:
+                    self.fail('older selection should have been rejected')
+                return new
+        result = asyncio.run(run())
+        cached = json.loads((folder / 'plain_lyrics.json').read_text(encoding='utf-8'))
+        self.assertEqual((result['saved'], cached['record_id'], cached['text']), (2, 2, 'newer selection'))
+
+    def test_lyrics_view_prefers_synced_lrc_and_does_not_touch_playback_cache(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', '周杰倫', '晴天')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        raw = '[ti:晴天]\n[00:02.00]天青色等煙雨'
+        (folder / 'lyrics.lrc').write_text(raw, encoding='utf-8')
+        original = {'artist': '周杰倫', 'title': '晴天', 'duration': 270, 'lyrics_record_id': 12,
+                    'lyrics_revision': 3, 'lyrics_source': 'manual', 'lyric_offset': 1.2}
+        meta_path = folder / 'meta.json'; meta_path.write_text(json.dumps(original, ensure_ascii=False), encoding='utf-8')
+        with patch.object(self.main.lyrics, 'plain_record', side_effect=AssertionError('plain lookup should not run')):
+            response = self.client.get(f"/api/lyrics/view/{item['key']}")
+        self.assertEqual((response.json()['status'], response.json()['source'], response.json()['text']), ('ready', 'synced', '天青色等煙雨'))
+        self.assertEqual(json.loads(meta_path.read_text(encoding='utf-8')), original)
+        self.assertFalse((folder / 'plain_lyrics.json').exists())
+
+    def test_lyrics_view_caches_plain_text_utf8_and_reuses_it(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Cody・Lee', '我愛你')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        metadata = {'artist': 'Cody・Lee', 'title': '我愛你', 'duration': 200, 'lyrics_record_id': 7,
+                    'lyrics_revision': 2, 'lyrics_source': 'automatic', 'lyric_offset': -0.4}
+        meta_path = folder / 'meta.json'; meta_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding='utf-8')
+        with patch.object(self.main.lyrics, 'plain_record', new_callable=AsyncMock, return_value={'id': 9, 'text': '日本語と繁體中文 안녕'}) as mocked:
+            first = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+            second = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+        self.assertEqual((first['source'], first['record_id'], second['text']), ('plain', 9, '日本語と繁體中文 안녕'))
+        self.assertEqual(mocked.call_count, 1)
+        cache = json.loads((folder / 'plain_lyrics.json').read_text(encoding='utf-8'))
+        self.assertEqual(cache['identity'], ['codylee', '我愛你'])
+        self.assertEqual(json.loads(meta_path.read_text(encoding='utf-8')), metadata)
+
+    def test_lyrics_view_coalesces_requests_and_rechecks_synced_cache(self):
+        import asyncio
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        async def lookup(*args):
+            await asyncio.sleep(.02)
+            async with self.main.state.cache_lock(item['id']):
+                self.main.worker.save_lyrics(folder, '[00:03.00]Synced arrived')
+            return {'id': 5, 'text': 'A plain fallback'}
+        with patch.object(self.main.lyrics, 'plain_record', new_callable=AsyncMock, side_effect=lookup) as mocked:
+            async def concurrent():
+                return await asyncio.gather(*(self.main.lyrics_view(item['key']) for _ in range(3)))
+            results = asyncio.run(concurrent())
+        self.assertEqual(mocked.call_count, 1)
+        self.assertTrue(all((r['source'], r['text']) == ('synced', 'Synced arrived') for r in results))
+        self.assertFalse((folder / 'plain_lyrics.json').exists())
+
+    def test_lyrics_view_identity_mismatch_and_network_error_are_isolated(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        cache = folder / 'plain_lyrics.json'
+        cache.write_text(json.dumps({'identity': ['old-artist', 'old-song'], 'status': 'ready', 'text': 'stale', 'checked_at': 1}), encoding='utf-8')
+        async def fail(*args): raise RuntimeError('offline')
+        with patch.object(self.main.lyrics, 'plain_record', new_callable=AsyncMock, side_effect=fail) as mocked:
+            first = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+            second = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+        self.assertEqual((first['status'], second['status']), ('error', 'error'))
+        self.assertEqual(mocked.call_count, 1)
+        saved = json.loads(cache.read_text(encoding='utf-8'))
+        self.assertEqual((saved['identity'], saved['text']), (['old-artist', 'old-song'], 'stale'))
+
+    def test_lyrics_view_negative_cache_expires_after_seven_days(self):
+        import json, time
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        with patch.object(self.main.lyrics, 'plain_record', new_callable=AsyncMock, return_value=None) as mocked:
+            self.assertEqual(self.client.get(f"/api/lyrics/view/{item['key']}").json()['status'], 'missing')
+            self.client.get(f"/api/lyrics/view/{item['key']}")
+            self.assertEqual(mocked.call_count, 1)
+            cache_path = folder / 'plain_lyrics.json'
+            cached = json.loads(cache_path.read_text(encoding='utf-8'));cached['checked_at'] = time.time() - self.main.PLAIN_MISSING_TTL - 1
+            cache_path.write_text(json.dumps(cached), encoding='utf-8')
+            mocked.return_value = {'id': 8, 'text': 'Fresh lyrics'}
+            refreshed = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+        self.assertEqual((mocked.call_count, refreshed['text']), (2, 'Fresh lyrics'))
+
+    def test_lyrics_view_resolves_promoted_key_and_rejects_removed_key(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        self.main.state.current = item
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'Artist', 'title': 'Song', 'duration': 100}), encoding='utf-8')
+        async def lookup(*args): return None
+        with patch.object(self.main.lyrics, 'plain_record', lookup):
+            response = self.client.get(f"/api/lyrics/view/{item['key']}")
+            self.assertEqual(response.json()['status'], 'missing')
+        async def selected(record_id): return {'id': record_id, 'syncedLyrics': '[00:01.00]New lyrics'}
+        with patch.object(self.main.lyrics, 'record', selected):
+            self.assertEqual(self.client.post(f"/api/queue/{item['key']}/lyrics", json={'id': 3}).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/lyrics/view/{item['key']}").json()['text'], 'New lyrics')
+        self.assertIs(self.main.state.current, item)
+        self.assertEqual(self.client.get(f"/api/lyrics/view/{item['key']}").json()['status'], 'ready')
+        self.main.state.current = None
+        self.assertEqual(self.client.get(f"/api/lyrics/view/{item['key']}").status_code, 404)
 
     def test_lyrics_current_uses_record_id_then_legacy_first_match(self):
         import json

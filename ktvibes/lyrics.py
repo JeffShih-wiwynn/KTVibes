@@ -3,10 +3,12 @@ import asyncio
 import json
 import re
 import sys
+import unicodedata
 
 STAMP = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
 VOICE = re.compile(r"(v\d+):\s*")
 WORD_STAMP = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
+LRC_META = re.compile(r"\[(?:ar|ti|al|by|re|ve|length|offset|kana|la):[^]]*\]", re.I)
 # Chinese/Japanese/Korean highlight per character; other scripts per word.
 CJK = "\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef"
 UNIT = re.compile(rf"[{CJK}]\s*|[^\s{CJK}]+\s*|\s+")
@@ -49,6 +51,71 @@ def parse_lrc(raw: str) -> list[dict]:
                 if unit[2] is None:
                     unit[2] = after[1] if after else min(following["t"] if following else unit[1] + 1, unit[1] + 1.5)
     return lines
+
+def lrc_display_text(raw: str) -> str:
+    """Readable raw LRC, preserving source order and blank lines without alignment parsing."""
+    shown = []
+    for line in raw.splitlines():
+        body = STAMP.sub("", line)
+        body = WORD_STAMP.sub("", body)
+        metadata = bool(LRC_META.search(body))
+        body = LRC_META.sub("", body)
+        if not body.strip():
+            if not metadata:
+                shown.append("")
+            continue
+        body = VOICE.sub("", body)
+        shown.append(body.rstrip())
+    # Metadata-only rows are omitted, while actual blank lines and lyric order remain intact.
+    return "\n".join(shown)
+
+def plain_identity(value: str) -> str:
+    """Normalize identity for cache and conservative LRCLIB matching across punctuation variants."""
+    folded = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(ch for ch in folded if ch.isalnum())
+
+def plain_match_score(candidate: dict, artist: str, title: str, duration: float | None) -> tuple | None:
+    """Return a deterministic relevance score, or reject a plain-lyrics record."""
+    text = candidate.get("plainLyrics")
+    if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > 200_000:
+        return None
+    wanted_titles = [plain_identity(v) for v in variants(title)]
+    wanted_artists = [plain_identity(v) for v in variants(artist)]
+    got_title = plain_identity(str(candidate.get("trackName") or ""))
+    got_artist = plain_identity(str(candidate.get("artistName") or ""))
+    title_match = any(value and (got_title == value or (len(value) >= 4 and (value in got_title or got_title in value))) for value in wanted_titles)
+    artist_match = any(value and (got_artist == value or (len(value) >= 4 and (value in got_artist or got_artist in value))) for value in wanted_artists)
+    if not title_match or not artist_match:
+        return None
+    duration_gap = 0.0
+    candidate_duration = candidate.get("duration")
+    if duration and candidate_duration:
+        try:
+            duration_gap = abs(float(candidate_duration) - float(duration))
+        except (TypeError, ValueError):
+            duration_gap = 0.0
+        if duration_gap > 10:
+            return None
+    return (got_title != next((v for v in wanted_titles if v), ""), got_artist != next((v for v in wanted_artists if v), ""), duration_gap, int(candidate.get("id") or 0))
+
+async def plain_record(artist: str, title: str, duration: float | None) -> dict | None:
+    """Find a relevant LRCLIB plain-lyrics record without changing synced candidate lookup."""
+    import httpx
+    searches = [{"artist_name": a, "track_name": t} for a in variants(artist) for t in variants(title)]
+    searches += [{"q": f"{a} {t}"} for a in variants(artist) for t in variants(title)]
+    searches = list({tuple(sorted(params.items())): params for params in searches}.values())[:8]
+    found = {}
+    async with lrclib() as client:
+        for params in searches:
+            response = await client.get("/api/search", params=params)
+            response.raise_for_status()
+            for candidate in response.json():
+                if plain_match_score(candidate, artist, title, duration) is not None:
+                    found[candidate.get("id") or (candidate.get("artistName"), candidate.get("trackName"))] = candidate
+    if not found:
+        return None
+    selected = min(found.values(), key=lambda c: plain_match_score(c, artist, title, duration))
+    return {"id": selected.get("id"), "text": selected["plainLyrics"].strip()}
 
 def add_pinyin(lines: list[dict]) -> list[dict]:
     """Append tone-marked pinyin to each unit; whole-line context picks polyphone readings (还是 hái, 了解 liǎo)."""
@@ -111,6 +178,47 @@ def add_romaji(lines: list[dict]) -> list[dict]:
         for unit, reading in zip(units, romaji([u[0] for u in units])):
             if not re.search(r"[A-Za-z]", unit[0]):
                 unit[3:] = [reading]
+    return lines
+
+def kana(units: list[str]) -> list[str]:
+    """Return hiragana readings per lyric unit, using pykakasi for kanji word readings."""
+    global _kakasi
+    if _kakasi is None:
+        import pykakasi
+        _kakasi = pykakasi.kakasi()
+    text = "".join(units)
+    owner = [i for i, unit in enumerate(units) for _ in unit]
+    out, position = [""] * len(units), 0
+    small = str.maketrans("ァィゥェォャュョヮッ", "ぁぃぅぇぉゃゅょゎっ")
+    for segment in _kakasi.convert(text):
+        word, reading = segment["orig"], segment.get("hira", "")
+        if HAN.search(word) and reading.strip() and position < len(owner):
+            out[owner[position]] += reading
+        elif KANA_CHARS.search(word):
+            chars = list(word)
+            for k, char in enumerate(chars):
+                if char in SMALL_KANA and k:
+                    if position + k - 1 < len(owner):
+                        out[owner[position + k - 1]] += char.translate(small)
+                    continue
+                hira = _kakasi.convert(char)[0].get("hira", char)
+                if position + k < len(owner):
+                    out[owner[position + k]] += hira
+        position += len(word)
+    return [value.strip() for value in out]
+
+def add_kana(lines: list[dict]) -> list[dict]:
+    """Append hiragana readings to Japanese lyric units in the kana guide slot."""
+    if not japanese(lines):
+        return lines
+    for line in lines:
+        units = line.get("units")
+        if not units:
+            continue
+        for unit, reading in zip(units, kana([u[0] for u in units])):
+            while len(unit) < 7:
+                unit.append("")
+            unit[6] = reading
     return lines
 
 # Characters that appear in written Cantonese but hardly ever in Mandarin lyrics.
@@ -463,6 +571,34 @@ async def search(query: str, duration: float) -> list[dict]:
         response.raise_for_status()
     synced = [c for c in response.json() if STAMP.search(c.get("syncedLyrics") or "")]
     return sorted(synced, key=lambda c: abs(float(c.get("duration") or 0) - duration))[:20]
+
+async def mixed_search(query: str, artist: str, title: str, duration: float | None) -> list[dict]:
+    """One LRCLIB record per result, with either usable synced or relevant plain lyrics (or both)."""
+    async with lrclib() as client:
+        response = await client.get("/api/search", params={"q": query})
+        response.raise_for_status()
+        records = response.json()
+    unique = {}
+    for candidate in records:
+        synced = isinstance(candidate.get("syncedLyrics"), str) and bool(STAMP.search(candidate["syncedLyrics"]))
+        plain_score = plain_match_score(candidate, artist, title, duration)
+        if not synced and plain_score is None:
+            continue
+        key = candidate.get("id") or (candidate.get("artistName"), candidate.get("trackName"), candidate.get("albumName"))
+        if key not in unique:
+            unique[key] = (candidate, plain_score)
+    # Keep the result deterministic while letting useful synced and accurately matched plain records
+    # rank ahead of irrelevant synced editions returned by LRCLIB's free-text query.
+    def order(item):
+        candidate, plain_score = item
+        synced = bool(STAMP.search(candidate.get("syncedLyrics") or ""))
+        try:
+            gap = abs(float(candidate.get("duration") or 0) - float(duration)) if duration else float("inf")
+        except (TypeError, ValueError):
+            gap = float("inf")
+        return (not synced, plain_score or (True, True, gap, int(candidate.get("id") or 0)), gap,
+                int(candidate.get("id") or 0), str(candidate.get("trackName") or "").casefold())
+    return [candidate for candidate, _ in sorted(unique.values(), key=order)[:50]]
 
 async def record(record_id: int) -> dict | None:
     """One LRCLIB record by id, as listed by candidates() or search()."""

@@ -1,6 +1,6 @@
 import {classicRemote,toastParts,emptyNote,secondsLeft} from './classic-remote.js';
 import {$,el,connect,api,clock,throttle,prepLabel,syncRanges,REDUCED,thumbnail} from './shared.js';
-let state,classicUi;
+let state,classicUi,openLyricsDialog;
 const SPRING='cubic-bezier(.38,1.21,.22,1)';
 const haptic=pattern=>{try{navigator.vibrate?.(pattern);}catch{}};
 function showImage(img,src){if(img.getAttribute('src')!==src){if(src)img.src=src;else img.removeAttribute('src');}img.hidden=!src;}
@@ -16,7 +16,7 @@ function toast(text,action,kind){
 }
 const send=connect('remote',render,message=>toast(message,undefined,'err'));
 function render(next){
- const before=state;state=next;state.received=Date.now()/1000;
+ const before=state;state=next;state.received=Date.now()/1000;openLyricsDialog?.onState(before,state);
  // The header pill reports the TV, since that decides whether anything can play.
  $('connection').textContent=!state.player_connected?'Open /tv on a device':state.player_audio?'Device ready':'Tap Enable sound on the device';$('connection').classList.toggle('warn',!state.player_audio);$('connection').classList.toggle('off',!state.player_connected);
  document.body.dataset.theme=state.theme||'default';showNow(!before);showControls(before);showQueue(before);showClassic();classicUi?.render(state);
@@ -28,10 +28,12 @@ function showNow(first){
  const c=state.current,art=c?thumbnail(c.id):'';
  showHero(!!c,first);$('hero').classList.toggle('paused',!state.playing);$('hero-state').textContent=state.playing?'NOW SINGING':'PAUSED';
  for(const id of ['hero-play','dock-play']){$(id).classList.toggle('playing',!!(c&&state.playing));$(id).setAttribute('aria-label',state.playing?'Pause':'Play');$(id).disabled=!c;}
+ $('hero-lyrics').disabled=!c;
  // The card keeps its last song while it folds away.
- for(const id of c?['hero-art','hero-glow','dock-art','sheet-art']:['dock-art','sheet-art'])showImage($(id),art);
- if(c){$('hero-title').textContent=c.title;$('hero-artist').textContent=c.artist;}$('hero-length').textContent=$('length').textContent=clock(c?.duration);
- $('dock-title').textContent=$('sheet-title').textContent=c?.title||'Nothing playing';$('dock-artist').textContent=c?.artist||'';
+ for(const id of c?['hero-art','hero-glow','dock-art']:['dock-art'])showImage($(id),art);
+ if(c){$('hero-title').textContent=c.title;$('hero-artist').textContent=c.artist;}$('hero-length').textContent=clock(c?.duration);
+ $('hero-offset').textContent=`${Number(state.offset)>=0?'+':''}${Number(state.offset||0).toFixed(1)}s`;$('hero-offset-earlier').disabled=$('hero-offset-later').disabled=!c;
+ $('dock-title').textContent=c?.title||'Nothing playing';$('dock-artist').textContent=c?.artist||'';
  showPosition();
 }
 // The card unfolds when a song starts on an empty stage and folds away when the stage empties:
@@ -47,20 +49,17 @@ function showHero(on,first){
  if(!on)animation.onfinish=()=>{if(!heroShown)hero.hidden=true;};
 }
 // Estimate the TV position between its two-second progress reports.
-let scrubbing=false;
 function showPosition(){
  if(!state)return;
  const live=state.current&&state.playing&&state.position>0?Date.now()/1000-state.received:0;
  const position=Math.min(state.position+live,state.current?.duration||0),fraction=state.current?.duration?position/state.current.duration:0;
  for(const id of ['hero-bar','dock-bar'])$(id).style.setProperty('--p',fraction);
  $('hero-position').textContent=clock(position);$('hero-bar').setAttribute('aria-valuetext',clock(position));
- if(!scrubbing){$('scrub').value=position;$('position').textContent=clock(position);syncRanges();}
 }
 setInterval(showPosition,500);
 $('hero-bar').onclick=e=>{if(!state?.current)return;const box=e.currentTarget.getBoundingClientRect();send({action:'seek',position:Math.max(0,Math.min(1,(e.clientX-box.left)/box.width))*state.current.duration});};
 $('hero-bar').onkeydown=e=>{const step={ArrowLeft:-5,ArrowRight:5}[e.key];if(step&&state?.current){e.preventDefault();send({action:'seek',position:state.position+step});}};
-$('scrub').oninput=()=>{scrubbing=true;$('position').textContent=clock(Number($('scrub').value));};
-$('scrub').onchange=()=>{scrubbing=false;send({action:'seek',position:Number($('scrub').value)});};
+for(const [id,delta] of [['hero-offset-earlier',-.5],['hero-offset-later',.5]])$(id).onclick=()=>{if(state?.current)send({action:'offset',delta});};
 const playPause=()=>{haptic(8);send({action:state?.playing?'pause':'play'});};
 $('hero-play').onclick=$('dock-play').onclick=playPause;
 $('skip').onclick=()=>{haptic(12);send({action:'skip'});};
@@ -88,17 +87,15 @@ for(const button of document.querySelectorAll('.react'))button.onclick=()=>{
  clearTimeout(button.timer);button.taps=(button.taps||0)+1;
  button.timer=setTimeout(()=>{toast(`Sent ${emoji}${button.taps>1?` ×${button.taps}`:''} to the device`);button.taps=0;},600);
 };
-// Controls sheet: mix, key, speed, TV display and lyric fixes.
+// Controls sheet: mix, key, speed and TV display.
 function showControls(before){
- for(const id of ['skip','earlier','later','lyric-version','scrub','key-down','key-up'])$(id).disabled=!state.current;
- $('scrub').max=state.current?.duration||1;
+ for(const id of ['skip','key-down','key-up'])$(id).disabled=!state.current;
  for(const [id,value] of [['vocal',state.vocal],['music',state.music],['speed',state.speed],['lyric-scale',state.lyric_scale]]){
   if(document.activeElement!==$(id)&&!gliding)$(id).value=value;$(`${id}-value`).textContent=`${Math.round(value*100)}%`;
  }
  for(const b of document.querySelectorAll('.presets button'))b.setAttribute('aria-pressed',Math.abs(b.dataset.vocal-state.vocal)<.005&&Math.abs(b.dataset.music-state.music)<.005);
  $('key-down').disabled||=state.key<=-6;$('key-up').disabled||=state.key>=6;
  if(state.key!==before?.key)rollKey(state.key,before?state.key-before.key:0);
- $('offset-value').textContent=`${state.offset>=0?'+':''}${state.offset.toFixed(1)}s`;
  for(const seg of SEGMENTED){
   for(const b of seg.querySelectorAll('button')){b.setAttribute('aria-pressed',b.dataset.value===state[seg.dataset.action]);if(seg.dataset.action==='guide')b.hidden=!(state.guides||[]).includes(b.dataset.value);}
   if(document.body.classList.contains('sheet-open')||state.theme==='classic')placePill(seg);  // openSheet measures the rest; in Classic the settings are a page
@@ -148,8 +145,7 @@ for(const seg of SEGMENTED)seg.onclick=e=>{const b=e.target.closest('button');if
 // A control measured while hidden (the Classic settings tab, a closed sheet) gets its pill once it has a size.
 addEventListener('resize',()=>SEGMENTED.forEach(placePill));
 {const sized=new ResizeObserver(entries=>entries.forEach(entry=>placePill(entry.target)));SEGMENTED.forEach(seg=>sized.observe(seg));}
-$('earlier').onclick=()=>send({action:'offset',delta:-0.5});$('later').onclick=()=>send({action:'offset',delta:0.5});
-$('lyric-version').onclick=()=>state?.current&&pickLyrics(state.current);
+$('hero-lyrics').onclick=()=>{if(state?.current)pickLyrics(state.current,{followCurrent:true});};
 function openSheet(){document.body.classList.add('sheet-open');$('sheet').inert=false;haptic(8);requestAnimationFrame(()=>SEGMENTED.forEach(placePill));}
 function closeSheet(){document.body.classList.remove('sheet-open');$('sheet').inert=true;}
 $('open-controls').onclick=$('dock-now').onclick=$('dock-settings').onclick=()=>document.body.dataset.theme==='classic'?classicUi.setTab('settings'):openSheet();
@@ -161,7 +157,7 @@ function roomLeft(){if(!state?.room_ends)return;const left=secondsLeft(state),en
  $('room-left').textContent=left?`${Math.ceil(left/60)}분 left`:'Time is up';$('room-end').textContent=`${end} 종료`;}
 setInterval(roomLeft,1000);
 for(const b of document.querySelectorAll('[data-minutes]'))b.onclick=()=>{haptic(6);send({action:'add_time',minutes:+b.dataset.minutes});};
-addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.querySelector('.lyric-sheet'))closeSheet();});
+addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(openLyricsDialog)openLyricsDialog.close();else if(document.body.classList.contains('sheet-open'))closeSheet();});
 // Drag the sheet down by its top to dismiss it.
 {
  const sheet=$('sheet');let startY=null;
@@ -231,7 +227,7 @@ function queueRow(item,index,justReady){
  // Classic: 우선 moves a song to sing next, as on the machine.
  const first=el('button','우선','row-button first classic-only');first.setAttribute('aria-label',`Play ${item.title} next`);first.hidden=index===0;
  first.onclick=()=>{haptic(8);move(index,0);toast(`${item.title} 우선예약`);};
- const lyricsButton=el('button','Lyrics','row-button lyrics-button');lyricsButton.disabled=item.status!=='ready';lyricsButton.setAttribute('aria-label',`Open lyrics settings for ${item.title}`);lyricsButton.onclick=()=>pickLyrics(item);
+ const lyricsButton=el('button','Lyrics','row-button lyrics-button');lyricsButton.setAttribute('aria-label',`Open lyrics settings for ${item.title}`);lyricsButton.onclick=()=>pickLyrics(item);
  row.append(el('span',String(index+1),'num'),thumb,info,lyricsButton,first,remove,grip);
  dragHandlers(row,grip);
  return row;
@@ -252,7 +248,7 @@ function dragHandlers(row,grip){
 function startDrag(row,e){
  if(dragging)return;
  const rows=[...$('queue').children].filter(r=>r.dataset.key),from=rows.indexOf(row),boxes=rows.map(r=>r.getBoundingClientRect());
- dragging={row,from,to:from,y:e.clientY,rows,boxes,height:boxes[from].height};
+ dragging={row,from,to:from,y:e.clientY,rows,keys:rows.map(r=>r.dataset.key),boxes,height:boxes[from].height};
  row.classList.add('lifted');for(const r of rows)if(r!==row)r.classList.add('shifting');
  haptic(15);
  addEventListener('pointermove',onDrag);addEventListener('pointerup',endDrag,{once:true});addEventListener('pointercancel',endDrag,{once:true});
@@ -276,9 +272,11 @@ function endDrag(){
   dragging=null;
   if(d.to!==d.from){
    // Show the new order now; the server's answer then matches it, so nothing jumps.
-   const order=state.upcoming.map(i=>i.key);order.splice(d.to,0,...order.splice(d.from,1));
-   state={...state,upcoming:order.map(key=>state.upcoming.find(i=>i.key===key))};queueShape=null;
-   move(d.from,d.to);
+   const order=[...d.keys];order.splice(d.to,0,...order.splice(d.from,1));
+   const currentItems=new Map(state.upcoming.map(item=>[item.key,item]));
+   if(order.length!==currentItems.size||order.some(key=>!currentItems.has(key))){queueShape=null;showQueue(state);toast('Queue changed while dragging. Please try again.',undefined,'err');return;}
+   state={...state,upcoming:order.map(key=>currentItems.get(key))};queueShape=null;
+   send({action:'reorder',keys:order});
   }else queueShape=null;
   showQueue(state);
  };
@@ -334,73 +332,109 @@ function flyToQueue(source){
 const REVEAL=96;let openSwipe=null;
 function closeSwipe(){if(!openSwipe)return;openSwipe.classList.remove('open');openSwipe.querySelector('.result').style.transform='';openSwipe=null;}
 document.addEventListener('pointerdown',e=>{if(openSwipe&&!openSwipe.contains(e.target))closeSwipe();});
-// Lyrics picker: every LRCLIB version that fits the song (languages, editions), with its first lines.
-async function pickLyrics(song){
- const sheet=el('div',undefined,'lyric-sheet'),panel=el('div',undefined,'lyric-sheet-panel'),list=el('div',undefined,'lyric-options'),close=el('button','Close');
- const shut=()=>{sheet.classList.add('out');sheet.addEventListener('animationend',()=>sheet.remove(),{once:true});};
- close.onclick=shut;sheet.onclick=e=>{if(e.target===sheet)shut();};
- const head=el('div',undefined,'lyric-sheet-head'),name=el('strong');name.append(el('small','가사 선택 · LYRICS','classic-only'),'Lyrics · ',el('span',song.title));head.append(name,close);close.setAttribute('aria-label','Close');
- // Search LRCLIB by hand when the automatic lookup found nothing or the wrong song.
- const form=el('form',undefined,'lyric-search'),input=el('input'),go=el('button','Search');
- input.type='search';input.value=`${song.artist} ${song.title}`;input.placeholder='Artist and song title';input.setAttribute('aria-label','Search lyrics');go.type='submit';
- form.append(input,go);form.onsubmit=e=>{e.preventDefault();input.blur();show(input.value.trim());};
- const queued=!!song.key&&state.upcoming.some(item=>item.key===song.key);
- const timing=el('div',undefined,'lyric-timing'),offset=el('b','+0.0s'),minus=el('button','−0.1s'),plus=el('button','+0.1s');
+// Shared two-tab reader/picker. The reader uses raw cached LRC/plain text, never TV timing data.
+async function pickLyrics(song,{followCurrent=false}={}){
+ if(openLyricsDialog)openLyricsDialog.close();
+ let targetKey=song.key||null,follow=followCurrent,closed=false,viewToken=0,searchToken=0,searchLoaded=false,offsetBusy=false,savedOffset=Number(song.offset)||0,lastText=null,lastTextKey=null;
+ const sheet=el('div',undefined,'lyric-sheet'),panel=el('div',undefined,'lyric-sheet-panel'),grip=el('button',undefined,'lyric-sheet-grip');grip.type='button';grip.setAttribute('aria-label','Close Lyrics panel');
+ const tabs=el('div',undefined,'lyric-tabs'),viewTab=el('button','View'),chooseTab=el('button','Select Lyrics');viewTab.type=chooseTab.type='button';
+ const viewPane=el('section',undefined,'lyric-view-pane'),viewStatus=el('p','Loading lyrics…','lyric-view-status'),reader=el('pre',undefined,'lyric-reader');
+ const viewControls=el('div',undefined,'lyric-view-controls'),viewTiming=el('div',undefined,'lyric-view-timing'),viewOffset=el('b',`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`),viewEarlier=el('button','−0.5s'),viewLater=el('button','+0.5s');
+ viewEarlier.type=viewLater.type='button';viewEarlier.setAttribute('aria-label','Shift lyrics earlier');viewLater.setAttribute('aria-label','Shift lyrics later');
+ const fontControls=el('div',undefined,'lyric-font-controls'),smaller=el('button','A−'),larger=el('button','A+');smaller.type=larger.type='button';smaller.setAttribute('aria-label','Decrease lyrics font size');larger.setAttribute('aria-label','Increase lyrics font size');
+ let fontSize=17;try{fontSize=Math.max(13,Math.min(30,Number(localStorage.getItem('ktvibes-lyrics-font-size'))||17));}catch{}
+ const setFont=()=>reader.style.fontSize=`${fontSize}px`;setFont();
+ const choosePane=el('section',undefined,'lyric-choose-pane'),chooseStatus=el('p',undefined,'lyric-choose-status muted'),form=el('form',undefined,'lyric-search'),input=el('input'),go=el('button','Search'),timing=el('div',undefined,'lyric-timing'),offset=el('b',`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`),minus=el('button','−0.1s'),plus=el('button','+0.1s'),preview=el('div',undefined,'lyric-preview'),list=el('div',undefined,'lyric-options');
+ input.type='search';input.value=`${song.artist} ${song.title}`;input.placeholder='Artist and song title';input.setAttribute('aria-label','Search lyrics');go.type='submit';form.append(input,go);
  timing.append(el('span','Timing ','timing-label'),offset,minus,plus);
- const preview=el('div',undefined,'lyric-preview');
- panel.append(head,form,timing,preview,list);sheet.append(panel);document.body.append(sheet);
- minus.disabled=plus.disabled=!queued;
- let savedOffset=0,offsetBusy=false;
- async function loadPreview(){
-  if(!queued)return;
+ viewTiming.append(viewOffset,viewEarlier,viewLater);fontControls.append(smaller,larger);viewControls.append(viewTiming,fontControls);viewPane.append(viewControls,viewStatus,reader);
+ tabs.append(viewTab,chooseTab);panel.append(grip,tabs,viewPane,choosePane);sheet.append(panel);document.body.append(sheet);
+ const shut=()=>{if(closed)return;closed=true;viewToken++;searchToken++;sheet.classList.add('out');sheet.addEventListener('animationend',()=>sheet.remove(),{once:true});if(openLyricsDialog?.sheet===sheet)openLyricsDialog=null;};
+ let gripStart=null,gripMoved=false;
+ grip.onclick=()=>{if(gripMoved){gripMoved=false;return;}shut();};
+ grip.onpointerdown=e=>{if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();gripStart=e.clientY;gripMoved=false;panel.style.transition='none';grip.setPointerCapture(e.pointerId);};
+ grip.onpointermove=e=>{if(gripStart===null)return;const distance=Math.max(0,e.clientY-gripStart);if(distance>8)gripMoved=true;panel.style.transform=`translateY(${distance}px)`;};
+ grip.onpointerup=e=>{if(gripStart===null)return;const distance=e.clientY-gripStart;gripStart=null;panel.style.transition='';panel.style.transform='';if(distance>100)shut();};
+ grip.onpointercancel=()=>{gripStart=null;panel.style.transition='';panel.style.transform='';};
+ sheet.onclick=e=>{if(e.target===sheet)shut();};
+ const setTab=tab=>{const viewing=tab==='view';viewPane.hidden=!viewing;choosePane.hidden=viewing;viewTab.classList.toggle('active',viewing);chooseTab.classList.toggle('active',!viewing);viewTab.setAttribute('aria-selected',String(viewing));chooseTab.setAttribute('aria-selected',String(!viewing));if(!viewing&&!searchLoaded){searchLoaded=true;show('');}};
+ viewTab.onclick=()=>setTab('view');chooseTab.onclick=()=>setTab('choose');setTab('view');
+ const liveTarget=()=>targetKey?(state?.current?.key===targetKey?state.current:state?.upcoming?.find(item=>item.key===targetKey)):null;
+ const pickerTarget=()=>liveTarget()||(!targetKey&&!follow?song:null);
+ const eligibleQueue=()=>state?.upcoming?.find(item=>item.key===targetKey&&item.status==='ready');
+ const isCurrent=()=>!!(state?.current&&targetKey&&state.current.key===targetKey);
+ function refreshControls(){const queued=eligibleQueue(),pending=state?.upcoming?.find(item=>item.key===targetKey),current=isCurrent(),editable=!!(queued||current||pending||(!targetKey&&!follow&&song.id));if(current)savedOffset=Number(state.offset)||0;else if(queued&&typeof queued.offset==='number')savedOffset=queued.offset;offset.textContent=viewOffset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;timing.hidden=!queued;minus.disabled=plus.disabled=!queued||offsetBusy;viewTiming.hidden=!queued;viewEarlier.disabled=viewLater.disabled=offsetBusy||!queued;if(queued){viewEarlier.textContent='−0.1s';viewLater.textContent='+0.1s';}else{viewEarlier.textContent='−0.5s';viewLater.textContent='+0.5s';}form.hidden=!editable;if(pending&&pending.status!=='ready')chooseStatus.textContent='Plain lyrics can be saved while this song prepares. Synced selection and timing are available when ready.';else if(queued)chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV. Timing changes apply only to synced lyrics.';else if(current)chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV. Synced lyrics take priority.';else chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV.';}
+ async function loadView(){
+  const key=targetKey,mine=++viewToken;if(!key){viewStatus.textContent='Open Lyrics from the current song or a queued song to read lyrics.';reader.textContent='';return;}
+  const target=liveTarget();if(!target){viewStatus.textContent=reader.textContent?'Song is no longer in the queue.':'Song is no longer available.';return;}
+  viewStatus.textContent='Loading lyrics…';
   try{
-   const data=await api(`/api/queue/${song.key}/lyrics`);savedOffset=Number(data.offset)||0;offset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;
-   preview.replaceChildren(...(data.lyrics||[]).map(line=>el('p',line.text||'')));
-  }catch(error){preview.replaceChildren(el('p',error.message,'error'));}
+   const data=await api(`/api/lyrics/view/${encodeURIComponent(key)}`);if(closed||mine!==viewToken||key!==targetKey)return;
+   if(!liveTarget()){viewStatus.textContent=reader.textContent?'Song is no longer in the queue.':'Song is no longer available.';return;}
+   if(data.status==='ready'){
+    const text=String(data.text||'');const changed=lastTextKey!==key||lastText!==text;
+    if(changed){reader.textContent=text;if(lastTextKey!==key||lastText!==text)reader.scrollTop=0;lastText=text;lastTextKey=key;}
+    viewStatus.textContent=data.source==='plain'?'Plain lyrics':'Synced lyrics';
+   }else if(data.status==='missing'){if(!reader.textContent)viewStatus.textContent='No lyrics found. Try Select Lyrics to search.';else viewStatus.textContent='Could not refresh lyrics; showing the previous text.';}
+   else{if(!reader.textContent)viewStatus.textContent='Could not load lyrics. Check your connection and try again.';else viewStatus.textContent='Connection issue; showing the previous text.';}
+  }catch(error){if(closed||mine!==viewToken||key!==targetKey)return;if(!reader.textContent)viewStatus.textContent=`Could not load lyrics: ${error.message}`;else viewStatus.textContent='Connection issue; showing the previous text.';}
  }
- async function adjustOffset(delta){
-  if(offsetBusy)return;offsetBusy=true;minus.disabled=plus.disabled=true;
-  const value=Math.max(-30,Math.min(30,Math.round((savedOffset+delta)*10)/10));
-  try{
-   const result=await api(`/api/queue/${song.key}/offset`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});
-   savedOffset=Number(result.offset)||0;offset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;
-   const item=state.upcoming.find(i=>i.key===song.key);if(item)item.offset=savedOffset;
-  }catch(error){toast(error.message,undefined,'err');}
-  finally{offsetBusy=false;minus.disabled=plus.disabled=false;}
- }
+ smaller.onclick=()=>{fontSize=Math.max(13,fontSize-1);setFont();try{localStorage.setItem('ktvibes-lyrics-font-size',fontSize);}catch{}};
+ larger.onclick=()=>{fontSize=Math.min(30,fontSize+1);setFont();try{localStorage.setItem('ktvibes-lyrics-font-size',fontSize);}catch{}};
+ async function loadPreview(){const item=eligibleQueue();if(!item)return;try{const data=await api(`/api/queue/${encodeURIComponent(targetKey)}/lyrics`);if(closed||!eligibleQueue())return;savedOffset=Number(data.offset)||0;offset.textContent=viewOffset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;preview.replaceChildren(...(data.lyrics||[]).map(line=>el('p',line.text||'')));}catch(error){preview.replaceChildren(el('p',error.message,'error'));}}
+ async function adjustOffset(delta){if(offsetBusy||!eligibleQueue())return;offsetBusy=true;refreshControls();const value=Math.max(-30,Math.min(30,Math.round((savedOffset+delta)*10)/10));try{const result=await api(`/api/queue/${encodeURIComponent(targetKey)}/offset`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});savedOffset=Number(result.offset)||0;offset.textContent=viewOffset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;const item=state.upcoming.find(i=>i.key===targetKey);if(item)item.offset=savedOffset;}catch(error){toast(error.message,undefined,'err');}finally{offsetBusy=false;refreshControls();}}
  minus.onclick=()=>adjustOffset(-.1);plus.onclick=()=>adjustOffset(.1);
- let latest=0;  // a slow earlier lookup must not replace newer results
+ async function adjustViewOffset(direction){if(offsetBusy)return;const current=isCurrent(),queued=eligibleQueue();if(!current&&!queued)return;const step=queued ? 0.1 : 0.5,value=Math.max(-30,Math.min(30,Math.round((savedOffset+direction*step)*10)/10)),key=targetKey;offsetBusy=true;refreshControls();try{const result=await api(`/api/queue/${encodeURIComponent(key)}/offset`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});if(closed||key!==targetKey||!liveTarget())return;savedOffset=Number(result.offset)||0;offset.textContent=viewOffset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;const live=liveTarget();if(live)live.offset=savedOffset;}catch(error){toast(error.message,undefined,'err');}finally{offsetBusy=false;refreshControls();}}
+ viewEarlier.onclick=()=>adjustViewOffset(-1);viewLater.onclick=()=>adjustViewOffset(1);
+ form.onsubmit=e=>{e.preventDefault();input.blur();show(input.value.trim());};
  async function show(query){
-  const mine=++latest;
-  const wait=el('p',query?'Searching…':'Looking up every version…','muted lyric-wait'),bar=el('span',undefined,'pbar busy classic-only');
-  for(let i=0;i<40;i++){const cell=el('i');cell.style.animationDelay=`${(i*.045).toFixed(3)}s`;bar.append(cell);}
-  wait.append(el('span',query?'검색 중':'모든 가사 버전을 찾는 중','classic-only'),bar);list.replaceChildren(wait);
-   try{
-   const options=await api(`/api/songs/${song.id}/lyrics${query?`?q=${encodeURIComponent(query)}`:''}`);
-   if(mine!==latest)return;
-   const none=el('p',undefined,'muted lyric-none');none.append(el('b','싱크 가사를 못 찾았어요','classic-only'),query?'Nothing found. Try fewer words, or the title in its original language.':'No synced lyrics found automatically. Try a search above.');
-   list.replaceChildren(...(options.length?[]:[none]));
-   // One row per language (its best version) first; other editions sit behind "Show all". Searches list everything.
-   const seen=new Set(),extra=[];
+  const mine=++searchToken,target=pickerTarget(),searchedKey=targetKey;if(!target||!(eligibleQueue()||isCurrent()||state?.upcoming?.some(item=>item.key===targetKey)||(!targetKey&&!follow&&song.id)))return;
+  const wait=el('p',query?'Searching…':'Looking up every version…','muted lyric-wait'),bar=el('span',undefined,'pbar busy classic-only');for(let i=0;i<40;i++){const cell=el('i');cell.style.animationDelay=`${(i*.045).toFixed(3)}s`;bar.append(cell);}wait.append(el('span',query?'검색 중':'모든 가사 버전을 찾는 중','classic-only'),bar);list.replaceChildren(wait);
+  try{
+   let data;
+   if(searchedKey)data=await api(`/api/lyrics/choices/${encodeURIComponent(searchedKey)}?q=${encodeURIComponent(query||`${target.artist} ${target.title}`)}`);
+   else{const legacy=await api(`/api/songs/${target.id}/lyrics${query?`?q=${encodeURIComponent(query)}`:''}`);data={synced_active:legacy.some(item=>item.current),results:legacy.map(item=>({id:item.id,track:item.track,artist:item.artist,album:item.album,difference:item.difference,formats:{synced:{available:true,current:item.current,language:item.language,lines:item.lines,preview:item.preview},plain:{available:false,selected:false,active:false,preview:[],lines:0}}}))};}
+   if(closed||mine!==searchToken||searchedKey!==targetKey||!pickerTarget())return;
+   const options=data.results||[];const none=el('p',undefined,'muted lyric-none');none.append(el('b','No suitable lyrics found','classic-only'),query?'Try fewer words, or use the song title in its original script.':'Search LRCLIB for synced or plain lyrics.');list.replaceChildren(...(options.length?[]:[none]));
    for(const o of options){
-    const first=!seen.has(o.language);seen.add(o.language);
-    const b=el('button',undefined,'lyric-option'+(o.current?' current':'')),top=el('div');
-    const gap=Math.abs(o.difference)>10?` · ${Math.abs(o.difference)}s ${o.difference>0?'longer':'shorter'} than this video`:'';
-    const lines=el('span',undefined,'cnt classic-only'),figure=el('span',String(o.lines),'lcd');figure.dataset.ghost='88';lines.append(figure,'LINES',...(gap?[el('span',gap.slice(3),'gap')]:[]));
-    top.append(el('b',o.language),el('span',[o.track,o.artist,o.album].filter(Boolean).join(' · ')),...(o.current?[el('em','In use')]:[]),lines);
-    b.append(top,...o.preview.map(line=>el('small',line)),el('small',`${o.lines} lines${gap}`,'count'));
-    b.onclick=async()=>{
-     for(const other of list.children)other.disabled=true;b.classList.add('busy');
-     try{await api(queued?`/api/queue/${song.key}/lyrics`:`/api/songs/${song.id}/lyrics`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:o.id})});toast(`Lyrics for ${song.title} set to ${o.track||o.language}`);if(queued)await loadPreview();shut();}
-     catch(error){toast(error.message,undefined,'err');for(const other of list.children)other.disabled=false;b.classList.remove('busy');}
-    };
-    if(query||first||o.current)list.append(b);else extra.push(b);
+    const card=el('article',undefined,'lyric-option'+(o.formats.synced.current?' current':'')),top=el('div',undefined,'lyric-card-head'),metadata=el('span',[o.track,o.artist,o.album].filter(Boolean).join(' · '));
+    top.append(el('b',o.track||'LRCLIB record'),metadata);card.append(top);
+    const formats=el('div',undefined,'lyric-formats');if(o.formats.synced.available)formats.append(el('span',o.formats.synced.current?'Synced · In use':'Synced','lyric-format'+(o.formats.synced.current?' selected':'')));
+    if(o.formats.plain.available){let label='Plain · Available';if(o.formats.plain.selected)label=o.formats.plain.active?'Plain · Fallback selected':'Plain · Fallback saved (Synced takes priority)';else if(data.synced_active)label='Plain · Available (Synced takes priority)';formats.append(el('span',label,'lyric-format'+(o.formats.plain.selected?' selected':'')));}
+    card.append(formats);
+    const previews=el('div',undefined,'lyric-card-previews');if(o.formats.synced.available){const block=el('div',undefined,'lyric-card-preview');block.append(el('small',`Synced · ${o.formats.synced.lines} lines${o.difference==null?'':` · ${Math.abs(o.difference)}s ${o.difference>0?'longer':'shorter'}`}`,'lyric-preview-label'));for(const line of o.formats.synced.preview)block.append(el('small',line));previews.append(block);}
+    if(o.formats.plain.available){const block=el('div',undefined,'lyric-card-preview plain');block.append(el('small',`Plain · ${o.formats.plain.lines} lines · Viewer only · Not shown on TV`,'lyric-preview-label'));for(const line of o.formats.plain.preview)block.append(el('small',line));previews.append(block);}card.append(previews);
+    const actions=el('div',undefined,'lyric-card-actions');
+    if(o.formats.synced.available){const useSynced=el('button','Use Synced Lyrics');useSynced.type='button';useSynced.disabled=!!(state?.upcoming?.some(item=>item.key===targetKey&&item.status!=='ready'));useSynced.onclick=()=>saveChoice(useSynced,o,'synced',target);actions.append(useSynced);}
+    if(o.formats.plain.available){const usePlain=el('button',o.formats.plain.selected?'Selected Plain Fallback':'Use Plain Fallback');usePlain.type='button';usePlain.disabled=!!o.formats.plain.selected;usePlain.onclick=()=>saveChoice(usePlain,o,'plain',target);actions.append(usePlain);}card.append(actions);list.append(card);
    }
-   if(extra.length){const all=el('button',undefined,'lyric-all');all.append(el('span',`${options.length}개 모두 보기 · `,'classic-only'),`Show all ${options.length} versions`);all.onclick=()=>{all.replaceWith(...extra);};list.append(all);}
-  }catch(error){if(mine===latest)list.replaceChildren(el('p',error.message,'error'));}
+  }catch(error){if(mine===searchToken)list.replaceChildren(el('p',error.message,'error'));}
  }
- show('');
- loadPreview();
+ async function saveChoice(button,option,kind,target){
+  const key=targetKey;if(button.disabled||button.dataset.saving)return;
+  const destination=kind==='plain'?(key?`/api/lyrics/plain/${encodeURIComponent(key)}`:null):state?.current?.key===key&&key?`/api/songs/${target.id}/lyrics`:eligibleQueue()?`/api/queue/${encodeURIComponent(key)}/lyrics`:!key&&!follow?`/api/songs/${target.id}/lyrics`:null;
+  if(!destination){toast('This song is no longer available for lyrics settings.',undefined,'err');return;}
+  const buttons=[...list.querySelectorAll('button')];buttons.forEach(item=>item.disabled=true);button.dataset.saving='1';button.classList.add('busy');
+  try{
+   const result=await api(destination,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:option.id})});
+   if(closed||key!==targetKey)return;
+   if(kind==='plain'&&result.source==='synced')toast('Plain fallback saved. Synced lyrics remain active and take priority.');else toast(`Lyrics for ${target.title} set to ${option.track||'LRCLIB record'}`);
+   await loadView();searchLoaded=false;if(kind==='synced'||result.source==='plain'||result.source==='synced')setTab('view');
+  }catch(error){toast(error.message,undefined,'err');}
+  finally{delete button.dataset.saving;button.classList.remove('busy');if(!closed){buttons.forEach(item=>item.disabled=false);refreshControls();}}
+ }
+ choosePane.append(chooseStatus,form,timing,preview,list);refreshControls();if(eligibleQueue())loadPreview();loadView();
+ openLyricsDialog={sheet,close:shut,onState(before,next){
+  if(follow&&next?.current?.key!==targetKey){targetKey=next?.current?.key||null;name.lastChild.textContent=next?.current?.title||'Lyrics';lastText=null;lastTextKey=null;reader.textContent='';loadView();searchLoaded=false;if(!choosePane.hidden){searchLoaded=true;show('');}}
+  const oldTarget=targetKey&&(before?.current?.key===targetKey?before.current:before?.upcoming?.find(item=>item.key===targetKey));
+  const newTarget=targetKey&&(next?.current?.key===targetKey?next.current:next?.upcoming?.find(item=>item.key===targetKey));
+  if(oldTarget&&newTarget&&((oldTarget.lyrics_status!==newTarget.lyrics_status&&newTarget.lyrics_status==='ready')||oldTarget.lyrics_rev!==newTarget.lyrics_rev)){loadView();searchLoaded=false;if(!choosePane.hidden){searchLoaded=true;show('');}}
+  if(newTarget&&typeof newTarget.offset==='number'){savedOffset=newTarget.offset;offset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;}
+  const present=targetKey&&(next?.current?.key===targetKey||next?.upcoming?.some(item=>item.key===targetKey));
+  if(!follow&&!present)viewStatus.textContent=reader.textContent?'Song is no longer in the queue; showing the lyrics already loaded.':'Song is no longer in the queue.';
+  else if(!follow&&present&&before&&!(before.current?.key===targetKey||before.upcoming?.some(item=>item.key===targetKey))){viewStatus.textContent='';loadView();}
+  refreshControls();
+ }};
 }
 // A ⋯ button on each recent song opens its advanced actions.
 let openMenu=null;

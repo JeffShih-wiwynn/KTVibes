@@ -9,7 +9,7 @@ import soundfile as sf
 from . import align, guides, songbook, stems, youtube, lyrics
 
 log = logging.getLogger(__name__)
-TIMING_VERSION = 10  # bump when alignment or guide output changes, so cached timing is rebuilt
+TIMING_VERSION = 11  # bump when alignment or guide output changes, so cached timing is rebuilt
 LYRICS_RECHECK = 7 * 86400  # a song LRCLIB had no lyrics for is looked up again after this long
 STARTED = time.time()  # energy-only timing (aligner failed) cached before this run is retried once
 
@@ -88,7 +88,7 @@ def timed_lyrics(folder: Path, raw: str, samples_path: Path, lines: list[dict]) 
         log.exception("Forced alignment unavailable for %s", folder.name)
         aligned = False
     lyrics.time_units(lines, energy)
-    lines = lyrics.add_jyutping(guides.add_hangul(lyrics.add_korean_romanization(lyrics.add_pinyin(lyrics.add_romaji(lines)))))
+    lines = lyrics.add_kana(lyrics.add_jyutping(guides.add_hangul(lyrics.add_korean_romanization(lyrics.add_pinyin(lyrics.add_romaji(lines))))))
     temporary = folder / f".timed.{uuid.uuid4().hex}.tmp"
     temporary.write_text(json.dumps({"key": key, "aligned": aligned, "lines": lines}, ensure_ascii=False), encoding="utf-8")
     temporary.replace(folder / "timed.json")

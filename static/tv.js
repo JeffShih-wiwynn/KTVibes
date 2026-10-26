@@ -205,7 +205,7 @@ function showLyrics(item){
 // Classic theme: the noraebang top strip and the room's clock, which counts down between broadcasts.
 const classic=()=>document.body.dataset.theme==='classic';
 function showClassicBar(s){$('cb-number').textContent=s.current?.number??'';$('cb-title').textContent=s.current?`${s.current.title} - ${s.current.artist}`:s.time_up?'이용해 주셔서 감사합니다':'노래를 선택해 주세요 · Pick a song';$('cb-title').classList.toggle('idle',!s.current);$('cb-reserved').textContent=String(s.upcoming.length).padStart(2,'0');}
-const SPEC_GUIDE={off:'끔',latin:'로마자 Aa',jyutping:'粵拼',hangul:'한글 가'};
+const SPEC_GUIDE={off:'끔',latin:'로마자 Aa',jyutping:'粵拼',hangul:'한글 가',kana:'일본어 あ'};
 function showSpecs(s){$('spec-key').textContent=!s.key?'원키':`${s.key>0?'♯':'♭'}${Math.abs(s.key)}`;$('spec-tempo').textContent=`${Math.round((s.speed??1)*100)}%`;$('spec-guide').textContent=SPEC_GUIDE[s.guide]??'—';}
 // Between songs Classic shows the reservation table: the next song (already on stage) first, then the queue.
 const lcdSpan=(text,ghost)=>{const span=el('span',text,'lcd');span.dataset.ghost=ghost;return span;};
@@ -256,7 +256,7 @@ function reserved(){$('cb-dial').hidden=true;showAttractDial('');}
 function placeLyrics(list){
  lyrics=list;firstLine=lyrics.findIndex(line=>line.text);$('lyrics').replaceChildren();
  slots=[];let slot=0;lyrics.forEach((line,i)=>{if(breakAfter(i-1))slot=0;slots[i]=slot;slot^=1;});
- lyrics.forEach((line,i)=>{const p=el('p',line.units?undefined:line.text||'♪','lyric');p.dir='auto';p.dataset.slot=slots[i];for(const [text,,,latin,hangul,jyutping] of line.units||[]){const span=el('span',undefined,latin||hangul||jyutping?'unit ruby':'unit');if(latin||hangul||jyutping){const word=text.trimEnd(),ruby=el('ruby',word),rt=el('rt');rt.append(el('span',latin||'','latin'),el('span',jyutping||'','jyutping'),el('span',hangul||'','hangul'));ruby.append(rt);span.append(ruby);p.append(span,text.slice(word.length));}else{span.textContent=text;p.append(span);}}$('lyrics').append(p);});$('no-lyrics').hidden=!!lyrics.length;$('lyrics').hidden=!lyrics.length;
+ lyrics.forEach((line,i)=>{const p=el('p',line.units?undefined:line.text||'♪','lyric');p.dir='auto';p.dataset.slot=slots[i];for(const [text,,,latin,hangul,jyutping,kana] of line.units||[]){const span=el('span',undefined,latin||hangul||jyutping||kana?'unit ruby':'unit');if(latin||hangul||jyutping||kana){const word=text.trimEnd(),ruby=el('ruby',word),rt=el('rt');rt.append(el('span',latin||'','latin'),el('span',jyutping||'','jyutping'),el('span',hangul||'','hangul'),el('span',kana||'','kana'));ruby.append(rt);span.append(ruby);p.append(span,text.slice(word.length));}else{span.textContent=text;p.append(span);}}$('lyrics').append(p);});$('no-lyrics').hidden=!!lyrics.length;$('lyrics').hidden=!lyrics.length;
 }
 // Stems are stored scaled down to fit FLAC; the gain restores their original level.
 // Speed changes tempo only (the browser keeps pitch); the key shift is applied by the worklet.
@@ -384,7 +384,7 @@ document.querySelector('.track').onclick=e=>{
  const box=e.currentTarget.getBoundingClientRect();
  send({action:'seek',position:(e.clientX-box.left)/box.width*state.current.duration});
 };
-const GUIDE_BADGES={off:['–','Guide off'],latin:['Aa','Romanization'],jyutping:['粵','Jyutping'],hangul:['가','한글']};
+const GUIDE_BADGES={off:['–','Guide off'],latin:['Aa','Romanization'],jyutping:['粵','Jyutping'],hangul:['가','한글'],kana:['あ','Japanese kana']};
 let badgeTimer;
 function showGuideBadge(mode){const [icon,label]=GUIDE_BADGES[mode];showBadge(icon,'Pronunciation',label);}
 // Any adjustment from a remote flashes on screen, so the room sees what changed.
