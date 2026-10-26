@@ -28,7 +28,8 @@ function showNow(first){
  const c=state.current,art=c?thumbnail(c.id):'';
  showHero(!!c,first);$('hero').classList.toggle('paused',!state.playing);$('hero-state').textContent=state.playing?'NOW SINGING':'PAUSED';
  for(const id of ['hero-play','dock-play']){$(id).classList.toggle('playing',!!(c&&state.playing));$(id).setAttribute('aria-label',state.playing?'Pause':'Play');$(id).disabled=!c;}
- $('hero-lyrics').disabled=!c;
+ $('hero-lyrics').disabled=$('dock-lyrics').disabled=!c;
+ $('dock-now').setAttribute('aria-label',c?'Jump to currently playing song':'Open settings');
  // The card keeps its last song while it folds away.
  for(const id of c?['hero-art','hero-glow','dock-art']:['dock-art'])showImage($(id),art);
  if(c){$('hero-title').textContent=c.title;$('hero-artist').textContent=c.artist;}$('hero-length').textContent=clock(c?.duration);
@@ -72,6 +73,8 @@ new IntersectionObserver(([entry])=>{
   $('dock').querySelector('.info').animate([{opacity:0,transform:'translateX(-8px)'},{opacity:1,transform:'none'}],{duration:350,delay:200,easing:'ease-out',fill:'backwards'});
  }
 },{rootMargin:'0px 0px -40px 0px'}).observe($('hero'));
+$('dock-now').onclick=()=>state?.current?$('hero').scrollIntoView({behavior:REDUCED.matches?'auto':'smooth',block:'center'}):openSheet();
+$('dock-lyrics').onclick=()=>{if(state?.current)pickLyrics(state.current,{followCurrent:true});};
 $('dock-queue').onclick=()=>$('queue').scrollIntoView({behavior:REDUCED.matches?'auto':'smooth',block:'center'});
 // Reactions float up on this phone and on the TV. Quick taps add up into one "×3" note.
 for(const button of document.querySelectorAll('.react'))button.onclick=()=>{
@@ -148,7 +151,7 @@ addEventListener('resize',()=>SEGMENTED.forEach(placePill));
 $('hero-lyrics').onclick=()=>{if(state?.current)pickLyrics(state.current,{followCurrent:true});};
 function openSheet(){document.body.classList.add('sheet-open');$('sheet').inert=false;haptic(8);requestAnimationFrame(()=>SEGMENTED.forEach(placePill));}
 function closeSheet(){document.body.classList.remove('sheet-open');$('sheet').inert=true;}
-$('open-controls').onclick=$('dock-now').onclick=$('dock-settings').onclick=()=>document.body.dataset.theme==='classic'?classicUi.setTab('settings'):openSheet();
+$('open-controls').onclick=()=>document.body.dataset.theme==='classic'?classicUi.setTab('settings'):openSheet();
 $('scrim').onclick=$('sheet-handle').onclick=closeSheet;
 // Classic theme: room time in Settings. Classic is always two-line lyrics.
 function showClassic(){const on=state.theme==='classic';$('room-time').hidden=!on;document.querySelector('[data-action=lyric_mode]').closest('.seg-row').hidden=on;roomLeft();}
@@ -439,15 +442,14 @@ async function pickLyrics(song,{followCurrent=false}={}){
  const sheet=el('div',undefined,'lyric-sheet'),panel=el('div',undefined,'lyric-sheet-panel'),grip=el('button',undefined,'lyric-sheet-grip');grip.type='button';grip.setAttribute('aria-label','Close Lyrics panel');
  const tabs=el('div',undefined,'lyric-tabs'),viewTab=el('button','View'),chooseTab=el('button','Select Lyrics');viewTab.type=chooseTab.type='button';
  const viewPane=el('section',undefined,'lyric-view-pane'),viewStatus=el('p','Loading lyrics…','lyric-view-status'),reader=el('pre',undefined,'lyric-reader');
- const viewControls=el('div',undefined,'lyric-view-controls'),viewTiming=el('div',undefined,'lyric-view-timing'),viewOffset=el('b',`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`),viewEarlier=el('button','−0.5s'),viewLater=el('button','+0.5s');
- viewEarlier.type=viewLater.type='button';viewEarlier.setAttribute('aria-label','Shift lyrics earlier');viewLater.setAttribute('aria-label','Shift lyrics later');
+ const viewControls=el('div',undefined,'lyric-view-controls');
  const fontControls=el('div',undefined,'lyric-font-controls'),smaller=el('button','A−'),larger=el('button','A+');smaller.type=larger.type='button';smaller.setAttribute('aria-label','Decrease lyrics font size');larger.setAttribute('aria-label','Increase lyrics font size');
  let fontSize=17;try{fontSize=Math.max(13,Math.min(30,Number(localStorage.getItem('ktvibes-lyrics-font-size'))||17));}catch{}
  const setFont=()=>reader.style.fontSize=`${fontSize}px`;setFont();
  const choosePane=el('section',undefined,'lyric-choose-pane'),chooseStatus=el('p',undefined,'lyric-choose-status muted'),form=el('form',undefined,'lyric-search'),input=el('input'),go=el('button','Search'),timing=el('div',undefined,'lyric-timing'),offset=el('b',`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`),minus=el('button','−0.1s'),plus=el('button','+0.1s'),preview=el('div',undefined,'lyric-preview'),list=el('div',undefined,'lyric-options');
  input.type='search';input.value=`${song.artist} ${song.title}`;input.placeholder='Artist and song title';input.setAttribute('aria-label','Search lyrics');go.type='submit';form.append(input,go);
  timing.append(el('span','Timing ','timing-label'),offset,minus,plus);
- viewTiming.append(viewOffset,viewEarlier,viewLater);fontControls.append(smaller,larger);viewControls.append(viewTiming,fontControls);viewPane.append(viewControls,viewStatus,reader);
+ fontControls.append(smaller,larger);viewControls.append(fontControls);viewPane.append(viewControls,viewStatus,reader);
  tabs.append(viewTab,chooseTab);panel.append(grip,tabs,viewPane,choosePane);sheet.append(panel);document.body.append(sheet);
  const shut=()=>{if(closed)return;closed=true;viewToken++;searchToken++;sheet.classList.add('out');sheet.addEventListener('animationend',()=>sheet.remove(),{once:true});if(openLyricsDialog?.sheet===sheet)openLyricsDialog=null;};
  let gripStart=null,gripMoved=false;
@@ -463,7 +465,7 @@ async function pickLyrics(song,{followCurrent=false}={}){
  const pickerTarget=()=>liveTarget()||(!targetKey&&!follow?song:null);
  const eligibleQueue=()=>state?.upcoming?.find(item=>item.key===targetKey&&item.status==='ready');
  const isCurrent=()=>!!(state?.current&&targetKey&&state.current.key===targetKey);
- function refreshControls(){const queued=eligibleQueue(),pending=state?.upcoming?.find(item=>item.key===targetKey),current=isCurrent(),editable=!!(queued||current||pending||(!targetKey&&!follow&&song.id));if(current)savedOffset=Number(state.offset)||0;else if(queued&&typeof queued.offset==='number')savedOffset=queued.offset;offset.textContent=viewOffset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;timing.hidden=!queued;minus.disabled=plus.disabled=!queued||offsetBusy;viewTiming.hidden=!queued;viewEarlier.disabled=viewLater.disabled=offsetBusy||!queued;if(queued){viewEarlier.textContent='−0.1s';viewLater.textContent='+0.1s';}else{viewEarlier.textContent='−0.5s';viewLater.textContent='+0.5s';}form.hidden=!editable;if(pending&&pending.status!=='ready')chooseStatus.textContent='Plain lyrics can be saved while this song prepares. Synced selection and timing are available when ready.';else if(queued)chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV. Timing changes apply only to synced lyrics.';else if(current)chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV. Synced lyrics take priority.';else chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV.';}
+ function refreshControls(){const queued=eligibleQueue(),pending=state?.upcoming?.find(item=>item.key===targetKey),current=isCurrent(),editable=!!(queued||current||pending||(!targetKey&&!follow&&song.id));if(current)savedOffset=Number(state.offset)||0;else if(queued&&typeof queued.offset==='number')savedOffset=queued.offset;offset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;timing.hidden=!queued;minus.disabled=plus.disabled=!queued||offsetBusy;form.hidden=!editable;if(pending&&pending.status!=='ready')chooseStatus.textContent='Plain lyrics can be saved while this song prepares. Synced selection is available when ready.';else if(queued)chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV. Synced lyrics take priority.';else if(current)chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV. Synced lyrics take priority.';else chooseStatus.textContent='Plain lyrics are Viewer only · Not shown on TV.';}
  async function loadView(){
   const key=targetKey,mine=++viewToken;if(!key){viewStatus.textContent='Open Lyrics from the current song or a queued song to read lyrics.';reader.textContent='';return;}
   const target=liveTarget();if(!target){viewStatus.textContent=reader.textContent?'Song is no longer in the queue.':'Song is no longer available.';return;}
@@ -481,11 +483,9 @@ async function pickLyrics(song,{followCurrent=false}={}){
  }
  smaller.onclick=()=>{fontSize=Math.max(13,fontSize-1);setFont();try{localStorage.setItem('ktvibes-lyrics-font-size',fontSize);}catch{}};
  larger.onclick=()=>{fontSize=Math.min(30,fontSize+1);setFont();try{localStorage.setItem('ktvibes-lyrics-font-size',fontSize);}catch{}};
- async function loadPreview(){const item=eligibleQueue();if(!item)return;try{const data=await api(`/api/queue/${encodeURIComponent(targetKey)}/lyrics`);if(closed||!eligibleQueue())return;savedOffset=Number(data.offset)||0;offset.textContent=viewOffset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;preview.replaceChildren(...(data.lyrics||[]).map(line=>el('p',line.text||'')));}catch(error){preview.replaceChildren(el('p',error.message,'error'));}}
- async function adjustOffset(delta){if(offsetBusy||!eligibleQueue())return;offsetBusy=true;refreshControls();const value=Math.max(-30,Math.min(30,Math.round((savedOffset+delta)*10)/10));try{const result=await api(`/api/queue/${encodeURIComponent(targetKey)}/offset`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});savedOffset=Number(result.offset)||0;offset.textContent=viewOffset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;const item=state.upcoming.find(i=>i.key===targetKey);if(item)item.offset=savedOffset;}catch(error){toast(error.message,undefined,'err');}finally{offsetBusy=false;refreshControls();}}
+ async function loadPreview(){const item=eligibleQueue();if(!item)return;try{const data=await api(`/api/queue/${encodeURIComponent(targetKey)}/lyrics`);if(closed||!eligibleQueue())return;savedOffset=Number(data.offset)||0;offset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;preview.replaceChildren(...(data.lyrics||[]).map(line=>el('p',line.text||'')));}catch(error){preview.replaceChildren(el('p',error.message,'error'));}}
+ async function adjustOffset(delta){if(offsetBusy||!eligibleQueue())return;offsetBusy=true;refreshControls();const value=Math.max(-30,Math.min(30,Math.round((savedOffset+delta)*10)/10));try{const result=await api(`/api/queue/${encodeURIComponent(targetKey)}/offset`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});savedOffset=Number(result.offset)||0;offset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;const item=state.upcoming.find(i=>i.key===targetKey);if(item)item.offset=savedOffset;}catch(error){toast(error.message,undefined,'err');}finally{offsetBusy=false;refreshControls();}}
  minus.onclick=()=>adjustOffset(-.1);plus.onclick=()=>adjustOffset(.1);
- async function adjustViewOffset(direction){if(offsetBusy)return;const current=isCurrent(),queued=eligibleQueue();if(!current&&!queued)return;const step=queued ? 0.1 : 0.5,value=Math.max(-30,Math.min(30,Math.round((savedOffset+direction*step)*10)/10)),key=targetKey;offsetBusy=true;refreshControls();try{const result=await api(`/api/queue/${encodeURIComponent(key)}/offset`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});if(closed||key!==targetKey||!liveTarget())return;savedOffset=Number(result.offset)||0;offset.textContent=viewOffset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;const live=liveTarget();if(live)live.offset=savedOffset;}catch(error){toast(error.message,undefined,'err');}finally{offsetBusy=false;refreshControls();}}
- viewEarlier.onclick=()=>adjustViewOffset(-1);viewLater.onclick=()=>adjustViewOffset(1);
  form.onsubmit=e=>{e.preventDefault();input.blur();show(input.value.trim());};
  async function show(query){
   const mine=++searchToken,target=pickerTarget(),searchedKey=targetKey;if(!target||!(eligibleQueue()||isCurrent()||state?.upcoming?.some(item=>item.key===targetKey)||(!targetKey&&!follow&&song.id)))return;
