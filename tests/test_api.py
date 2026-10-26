@@ -64,6 +64,93 @@ class APITests(unittest.TestCase):
         self.assertEqual((folder / 'lyrics.lrc').read_text(encoding='utf-8'), record['syncedLyrics'])
         self.assertEqual(json.loads((folder / 'meta.json').read_text(encoding='utf-8'))['lyrics_identity'], ['Simple Plan', 'Perfect'])
 
+    def test_lyrics_current_uses_record_id_then_legacy_first_match(self):
+        import json
+        folder = Path(self.temp.name) / 'aaaaaaaaaaa'
+        folder.mkdir()
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'Artist', 'title': 'Song', 'duration': 100,
+                                                       'lyrics_record_id': 202}), encoding='utf-8')
+        raw = '[00:01.00]Same lyrics'
+        (folder / 'lyrics.lrc').write_text(raw, encoding='utf-8')
+        records = [
+            {'id': 101, 'trackName': 'Song', 'artistName': 'Artist', 'duration': 100, 'syncedLyrics': raw},
+            {'id': 202, 'trackName': 'Song', 'artistName': 'Other Artist', 'duration': 100, 'syncedLyrics': raw},
+            {'id': 303, 'trackName': 'Song', 'artistName': 'Artist', 'duration': 100, 'syncedLyrics': '[00:02.00]Other lyrics'},
+        ]
+        async def search(query, duration):
+            return records
+        with patch.object(self.main.lyrics, 'search', search):
+            options = self.client.get('/api/songs/aaaaaaaaaaa/lyrics', params={'q': 'Artist Song'}).json()
+        self.assertEqual([o['id'] for o in options if o['current']], [202])
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'Artist', 'title': 'Song', 'duration': 100}), encoding='utf-8')
+        with patch.object(self.main.lyrics, 'search', search):
+            options = self.client.get('/api/songs/aaaaaaaaaaa/lyrics', params={'q': 'Artist Song'}).json()
+        self.assertEqual([o['id'] for o in options if o['current']], [101])
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'Artist', 'title': 'Song', 'duration': 100,
+                                                       'lyrics_record_id': 999}), encoding='utf-8')
+        with patch.object(self.main.lyrics, 'search', search):
+            options = self.client.get('/api/songs/aaaaaaaaaaa/lyrics', params={'q': 'Artist Song'}).json()
+        self.assertEqual([o['id'] for o in options if o['current']], [])
+
+    def test_identical_manual_lyrics_updates_record_id_without_resetting_offset(self):
+        import json
+        folder = Path(self.temp.name) / 'aaaaaaaaaaa'
+        folder.mkdir()
+        raw = '[00:01.00]Same lyrics'
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'Artist', 'title': 'Song', 'duration': 100,
+                                                       'lyric_offset': 1.5, 'lyrics_revision': 4,
+                                                       'lyrics_record_id': 101}), encoding='utf-8')
+        (folder / 'lyrics.lrc').write_text(raw, encoding='utf-8')
+        self.main.state.path = Path(self.temp.name) / 'queue.json'
+        item = self.main.state.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        item.update(status='ready', lyrics_status='ready', lyrics=[{'t': 1, 'text': 'Same lyrics'}], offset=1.5)
+        self.main.state.upcoming.append(item)
+        async def record(record_id):
+            return {'id': record_id, 'trackName': 'Song', 'artistName': 'Artist', 'duration': 100, 'syncedLyrics': raw}
+        with patch.object(self.main.lyrics, 'record', record), patch.object(self.main.worker, 'timed_lyrics', side_effect=AssertionError('alignment should be reused')):
+            response = self.client.post(f"/api/queue/{item['key']}/lyrics", json={'id': 202})
+        self.assertEqual(response.status_code, 200)
+        meta = json.loads((folder / 'meta.json').read_text(encoding='utf-8'))
+        self.assertEqual((meta['lyrics_record_id'], meta['lyric_offset'], meta['lyrics_revision']), (202, 1.5, 4))
+
+    def test_queued_lyrics_and_absolute_offset_are_song_specific(self):
+        import json
+        folder = Path(self.temp.name) / 'aaaaaaaaaaa'
+        folder.mkdir()
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'Simple Plan', 'title': 'Perfect', 'duration': 280,
+                                                       'lyric_offset': 1.2}), encoding='utf-8')
+        (folder / 'lyrics.lrc').write_text('[00:10.00]Old lyrics', encoding='utf-8')
+        self.main.state.path = Path(self.temp.name) / 'queue.json'
+        item = self.main.state.entry('aaaaaaaaaaa', 'Simple Plan', 'Perfect')
+        item.update(status='ready', lyrics_status='ready', lyrics=[{'t': 10, 'text': 'Old lyrics'}], offset=1.2)
+        self.main.state.upcoming.append(item)
+        record = {'id': 7, 'trackName': 'Perfect', 'artistName': 'Simple Plan', 'duration': 278,
+                  'syncedLyrics': '[00:12.00]New lyrics'}
+        async def fetch(record_id):
+            return record if record_id == 7 else None
+        with patch.object(self.main.lyrics, 'record', fetch):
+            response = self.client.post(f"/api/queue/{item['key']}/lyrics", json={'id': 7})
+            self.assertEqual(response.status_code, 200)
+        self.assertEqual(item['lyrics'][0]['text'], 'New lyrics')
+        self.assertEqual(item['lyrics_status'], 'ready')
+        self.assertEqual((folder / 'lyrics.lrc').read_text(encoding='utf-8'), record['syncedLyrics'])
+        self.assertNotIn('lyric_offset', json.loads((folder / 'meta.json').read_text(encoding='utf-8')))
+        response = self.client.patch(f"/api/queue/{item['key']}/offset", json={'value': -1.5})
+        self.assertEqual((response.status_code, response.json()['offset']), (200, -1.5))
+        self.assertEqual(json.loads((folder / 'meta.json').read_text(encoding='utf-8'))['lyric_offset'], -1.5)
+        preview = self.client.get(f"/api/queue/{item['key']}/lyrics")
+        self.assertEqual((preview.status_code, preview.json()['offset']), (200, -1.5))
+
+    def test_queued_lyrics_settings_require_ready_song_and_validate_offset(self):
+        import json
+        folder = Path(self.temp.name) / 'aaaaaaaaaaa'
+        folder.mkdir()
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'IU', 'title': 'Song', 'duration': 100}), encoding='utf-8')
+        item = self.main.state.entry('aaaaaaaaaaa', 'IU', 'Song')
+        self.main.state.upcoming.append(item)
+        self.assertEqual(self.client.get(f"/api/queue/{item['key']}/lyrics").status_code, 409)
+        self.assertEqual(self.client.patch(f"/api/queue/{item['key']}/offset", json={'value': 'NaN'}).status_code, 422)
+
     def test_recent_lists_played_songs_newest_first(self):
         import json
         cache = Path(self.temp.name)

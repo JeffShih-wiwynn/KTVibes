@@ -180,7 +180,7 @@ const statusKo=(item,index)=>index===0&&item.status==='ready'?'다음곡':STATUS
 function showQueue(before){
  const count=state.upcoming.length;$('queue-count').textContent=$('dock-count').textContent=count;
  if(before&&count>before.upcoming.length&&!REDUCED.matches)for(const id of ['queue-count','dock-count']){const c=$(id);c.classList.remove('bump');void c.offsetWidth;c.classList.add('bump');}
- const shape=JSON.stringify([!!state.current,...state.upcoming.map(i=>[i.key,i.title,i.artist,i.status,i.error])]);  // the empty notice reads differently while a song plays
+ const shape=JSON.stringify([!!state.current,...state.upcoming.map(i=>[i.key,i.title,i.artist,i.status,i.error,i.lyrics_status])]);  // the empty notice reads differently while a song plays
  if(shape!==queueShape&&!dragging){
   // A song that turns ready while queued flashes its ring once.
   const preparing=new Set(before?.upcoming.filter(i=>i.status!=='ready').map(i=>i.key));
@@ -218,7 +218,10 @@ function queueRow(item,index,justReady){
  // The ring shows while the song prepares, and once more as it turns ready.
  if(item.status!=='ready'&&item.status!=='error'||justReady&&item.status==='ready')thumb.insertAdjacentHTML('beforeend',`<svg class="ring" viewBox="0 0 52 52" style="--c:${RING}" aria-hidden="true"><circle class="track" cx="26" cy="26" r="23"/><circle class="fill" cx="26" cy="26" r="23"/></svg>`);
  if(justReady&&item.status==='ready')haptic(10);
- const info=el('div',undefined,'info'),line=el('p');if(item.number)line.append(el('span',String(item.number),'qnum classic-only'),' ');line.append(item.artist,...(justReady&&item.status==='ready'?[el('em','준비 완료','ready-lamp classic-only')]:[]),el('span',' · ','sep'),el('span',statusKo(item,index),'status-ko classic-only'),el('span',statusText(item),'status'));info.append(el('h3',item.title),line);
+ const info=el('div',undefined,'info'),line=el('p');if(item.number)line.append(el('span',String(item.number),'qnum classic-only'),' ');line.append(item.artist,...(justReady&&item.status==='ready'?[el('em','준비 완료','ready-lamp classic-only')]:[]),el('span',' · ','sep'),el('span',statusKo(item,index),'status-ko classic-only'),el('span',statusText(item),'status'));
+ const lyricsState={processing:'Lyrics loading',ready:'Lyrics ready',missing:'No lyrics',error:'Lyrics error'}[item.lyrics_status]||'Lyrics loading';
+ line.append(el('span',' · ','sep'),el('span',lyricsState,'lyrics-status'));
+ info.append(el('h3',item.title),line);
  if(item.status!=='ready'&&item.status!=='error'){const bar=el('div',undefined,'prepbar classic-only');bar.append(el('i'));info.append(bar);}
  if(item.error){const retry=el('button','Retry','retry');retry.onclick=()=>send({action:'retry',key:item.key});info.append(el('p',item.error,'error'),retry);}
  const remove=el('button','×','row-button');remove.setAttribute('aria-label',`Remove ${item.title}`);
@@ -228,7 +231,8 @@ function queueRow(item,index,justReady){
  // Classic: 우선 moves a song to sing next, as on the machine.
  const first=el('button','우선','row-button first classic-only');first.setAttribute('aria-label',`Play ${item.title} next`);first.hidden=index===0;
  first.onclick=()=>{haptic(8);move(index,0);toast(`${item.title} 우선예약`);};
- row.append(el('span',String(index+1),'num'),thumb,info,first,remove,grip);
+ const lyricsButton=el('button','Lyrics','row-button lyrics-button');lyricsButton.disabled=item.status!=='ready';lyricsButton.setAttribute('aria-label',`Open lyrics settings for ${item.title}`);lyricsButton.onclick=()=>pickLyrics(item);
+ row.append(el('span',String(index+1),'num'),thumb,info,lyricsButton,first,remove,grip);
  dragHandlers(row,grip);
  return row;
 }
@@ -340,14 +344,38 @@ async function pickLyrics(song){
  const form=el('form',undefined,'lyric-search'),input=el('input'),go=el('button','Search');
  input.type='search';input.value=`${song.artist} ${song.title}`;input.placeholder='Artist and song title';input.setAttribute('aria-label','Search lyrics');go.type='submit';
  form.append(input,go);form.onsubmit=e=>{e.preventDefault();input.blur();show(input.value.trim());};
- panel.append(head,form,list);sheet.append(panel);document.body.append(sheet);
+ const queued=!!song.key&&state.upcoming.some(item=>item.key===song.key);
+ const timing=el('div',undefined,'lyric-timing'),offset=el('b','+0.0s'),minus=el('button','−0.1s'),plus=el('button','+0.1s');
+ timing.append(el('span','Timing ','timing-label'),offset,minus,plus);
+ const preview=el('div',undefined,'lyric-preview');
+ panel.append(head,form,timing,preview,list);sheet.append(panel);document.body.append(sheet);
+ minus.disabled=plus.disabled=!queued;
+ let savedOffset=0,offsetBusy=false;
+ async function loadPreview(){
+  if(!queued)return;
+  try{
+   const data=await api(`/api/queue/${song.key}/lyrics`);savedOffset=Number(data.offset)||0;offset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;
+   preview.replaceChildren(...(data.lyrics||[]).map(line=>el('p',line.text||'')));
+  }catch(error){preview.replaceChildren(el('p',error.message,'error'));}
+ }
+ async function adjustOffset(delta){
+  if(offsetBusy)return;offsetBusy=true;minus.disabled=plus.disabled=true;
+  const value=Math.max(-30,Math.min(30,Math.round((savedOffset+delta)*10)/10));
+  try{
+   const result=await api(`/api/queue/${song.key}/offset`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});
+   savedOffset=Number(result.offset)||0;offset.textContent=`${savedOffset>=0?'+':''}${savedOffset.toFixed(1)}s`;
+   const item=state.upcoming.find(i=>i.key===song.key);if(item)item.offset=savedOffset;
+  }catch(error){toast(error.message,undefined,'err');}
+  finally{offsetBusy=false;minus.disabled=plus.disabled=false;}
+ }
+ minus.onclick=()=>adjustOffset(-.1);plus.onclick=()=>adjustOffset(.1);
  let latest=0;  // a slow earlier lookup must not replace newer results
  async function show(query){
   const mine=++latest;
   const wait=el('p',query?'Searching…':'Looking up every version…','muted lyric-wait'),bar=el('span',undefined,'pbar busy classic-only');
   for(let i=0;i<40;i++){const cell=el('i');cell.style.animationDelay=`${(i*.045).toFixed(3)}s`;bar.append(cell);}
   wait.append(el('span',query?'검색 중':'모든 가사 버전을 찾는 중','classic-only'),bar);list.replaceChildren(wait);
-  try{
+   try{
    const options=await api(`/api/songs/${song.id}/lyrics${query?`?q=${encodeURIComponent(query)}`:''}`);
    if(mine!==latest)return;
    const none=el('p',undefined,'muted lyric-none');none.append(el('b','싱크 가사를 못 찾았어요','classic-only'),query?'Nothing found. Try fewer words, or the title in its original language.':'No synced lyrics found automatically. Try a search above.');
@@ -363,7 +391,7 @@ async function pickLyrics(song){
     b.append(top,...o.preview.map(line=>el('small',line)),el('small',`${o.lines} lines${gap}`,'count'));
     b.onclick=async()=>{
      for(const other of list.children)other.disabled=true;b.classList.add('busy');
-     try{await api(`/api/songs/${song.id}/lyrics`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:o.id})});toast(`Lyrics for ${song.title} set to ${o.track||o.language}`);shut();}
+     try{await api(queued?`/api/queue/${song.key}/lyrics`:`/api/songs/${song.id}/lyrics`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:o.id})});toast(`Lyrics for ${song.title} set to ${o.track||o.language}`);if(queued)await loadPreview();shut();}
      catch(error){toast(error.message,undefined,'err');for(const other of list.children)other.disabled=false;b.classList.remove('busy');}
     };
     if(query||first||o.current)list.append(b);else extra.push(b);
@@ -372,6 +400,7 @@ async function pickLyrics(song){
   }catch(error){if(mine===latest)list.replaceChildren(el('p',error.message,'error'));}
  }
  show('');
+ loadPreview();
 }
 // A ⋯ button on each recent song opens its advanced actions.
 let openMenu=null;

@@ -61,6 +61,7 @@ class State:
         self.saved_at = 0.0
         self.build = ""  # fingerprint of the web app files; open pages reload when it changes
         self.lyrics_sent = {}  # TV socket -> key of the song whose lyrics it already has
+        self.cache_locks = {}  # video id -> lock for lyrics/meta cache updates
 
     def guides(self):
         """Guide modes with something to show for the current song (all of them when idle)."""
@@ -149,6 +150,10 @@ class State:
             self.player = None
             self.audio = False
 
+    def cache_lock(self, video_id):
+        """Serialize read/modify/write operations for one video's cache."""
+        return self.cache_locks.setdefault(video_id, asyncio.Lock())
+
     def advance(self, scored=False):
         self.current = None
         self.position = 0
@@ -181,22 +186,47 @@ class State:
     @staticmethod
     def entry(video_id, artist, title):
         return {"key": uuid.uuid4().hex, "id": video_id, "artist": artist, "title": title,
-                "status": "queued", "lyrics": [], "duration": 0, "error": None}
+                "status": "queued", "lyrics": [], "lyrics_status": "processing", "lyrics_error": None,
+                "duration": 0, "error": None}
 
-    def remember_offset(self):
+    async def remember_offset(self):
         """Keep the lyric timing nudge in the song's meta.json, so it applies next time too."""
         if self.path is None or not self.current:
             return
         self.current["offset"] = self.offset
         meta_path = self.path.parent / self.current["id"] / "meta.json"
         try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            meta["lyric_offset"] = self.offset
-            temporary = meta_path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-            temporary.replace(meta_path)
+            async with self.cache_lock(self.current["id"]):
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                meta["lyric_offset"] = self.offset
+                temporary = meta_path.with_name(f".meta.{uuid.uuid4().hex}.tmp")
+                temporary.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                temporary.replace(meta_path)
         except (OSError, ValueError):
             pass
+
+    async def set_queue_offset(self, key, value):
+        """Set a ready upcoming song's cache-backed lyric offset."""
+        item = next((i for i in self.upcoming if i["key"] == key), None)
+        if item is None:
+            raise ValueError("Queue song not found")
+        if item["status"] != "ready":
+            raise ValueError("Lyrics settings are not ready yet")
+        value = max(-30, min(30, number(value)))
+        if self.path is None:
+            raise ValueError("Queue cache is not ready")
+        meta_path = self.path.parent / item["id"] / "meta.json"
+        try:
+            async with self.cache_lock(item["id"]):
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                meta["lyric_offset"] = value
+                temporary = meta_path.with_name(f".meta.{uuid.uuid4().hex}.tmp")
+                temporary.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                temporary.replace(meta_path)
+        except (OSError, ValueError) as exc:
+            raise ValueError("Unable to save lyric offset") from exc
+        item["offset"] = value
+        return item
 
     def take_back(self):
         """Put the last removed song back where it was, while the removal is still recent."""
@@ -270,7 +300,7 @@ class State:
             self.audio = message.get("value") is True
         elif action == "offset":
             self.offset = max(-30, min(30, self.offset + number(message.get("delta", 0))))
-            self.remember_offset()
+            await self.remember_offset()
         elif action == "seek":
             if not self.current:
                 raise ValueError("Nothing is playing")

@@ -154,12 +154,20 @@ async def lyric_options(video_id: str, q: str = Query("", max_length=200)):
                        lyrics.candidates(meta["artist"], meta["title"], meta["duration"], (meta.get("source_title") or "",), exhaustive=True))
     except Exception as exc:
         raise HTTPException(502, f"Lyrics lookup failed: {exc}") from exc
+    saved_id = meta.get("lyrics_record_id") if "lyrics_record_id" in meta else None
+    has_saved_id = "lyrics_record_id" in meta and saved_id is not None
+    matched_content = False
     options = []
     for c in found:
         raw = c.get("syncedLyrics") or ""
         lines = [line["text"] for line in lyrics.parse_lrc(raw) if line.get("text")]
+        if has_saved_id:
+            selected = c.get("id") == saved_id
+        else:
+            selected = not matched_content and raw == current
+            matched_content = matched_content or selected
         options.append({"id": c.get("id"), "track": c.get("trackName"), "artist": c.get("artistName"), "album": c.get("albumName"),
-                        "language": lyrics.LANGUAGES[lyrics.script(raw)], "lines": len(lines), "preview": lines[:2], "current": raw == current,
+                        "language": lyrics.LANGUAGES[lyrics.script(raw)], "lines": len(lines), "preview": lines[:2], "current": selected,
                         # seconds longer (+) or shorter than this song: a big gap usually means another version
                         "difference": round(float(c.get("duration") or 0) - meta["duration"])})
     return options
@@ -167,31 +175,120 @@ async def lyric_options(video_id: str, q: str = Query("", max_length=200)):
 class LyricChoice(BaseModel):
     id: int
 
-@app.post("/api/songs/{video_id}/lyrics")
-async def choose_lyrics(video_id: str, choice: LyricChoice):
-    """Save the chosen version; the song on stage switches to it at once."""
-    folder, meta = song_meta(video_id)
+class OffsetChoice(BaseModel):
+    value: float
+
+    @field_validator("value")
+    @classmethod
+    def finite(cls, value):
+        if not math.isfinite(value):
+            raise ValueError("Expected a finite number")
+        return value
+
+def queue_item(queue_key: str, video_id: str | None = None):
+    item = next((i for i in state.upcoming if i["key"] == queue_key), None)
+    if item is None:
+        raise HTTPException(404, "Queue song not found")
+    if video_id is not None and item["id"] != video_id:
+        raise HTTPException(409, "Queue song changed")
+    if item["status"] != "ready":
+        raise HTTPException(409, "Lyrics settings are not ready yet")
+    return item
+
+async def select_lyrics(video_id: str, choice: LyricChoice, target=None):
+    """Save and prepare a selected LRCLIB record for current or queued playback."""
+    folder, _ = song_meta(video_id)
     try:
         chosen = await lyrics.record(choice.id)
     except Exception as exc:
         raise HTTPException(502, f"Lyrics lookup failed: {exc}") from exc
-    if not chosen or not lyrics.STAMP.search(chosen.get("syncedLyrics") or ""):
+    raw = (chosen or {}).get("syncedLyrics") or ""
+    if not chosen or not lyrics.STAMP.search(raw):
         raise HTTPException(404, "That lyrics version is no longer available")
+    if target is not None and (target not in state.upcoming or target["status"] != "ready"):
+        raise HTTPException(409, "Queue song changed while saving")
+
+    async with state.cache_lock(video_id):
+        meta_path = folder / "meta.json"
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(409, "Song cache changed; try again") from exc
+        old_raw = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
+        changed = raw != old_raw
+        if changed:
+            worker.save_lyrics(folder, raw)
+            meta.pop("lyric_offset", None)
+            meta["lyrics_revision"] = int(meta.get("lyrics_revision") or 0) + 1
+        meta["lyrics_record_id"] = choice.id
+        meta["lyrics_identity"] = [meta["artist"], meta["title"]]
+        meta["lyrics_source"] = "manual"
+        worker.save_meta(folder, meta)
+        revision = int(meta.get("lyrics_revision") or 0)
+
+    lines = lyrics.parse_lrc(raw)
+    vocals_path = stems.path(folder, "vocals")
+    if changed and vocals_path and vocals_path.is_file():
+        try:
+            lines = await asyncio.to_thread(worker.timed_lyrics, folder, raw, vocals_path, lines)
+        except Exception as exc:
+            raise HTTPException(502, "Lyrics timing failed") from exc
+    lyrics.line_starts(lines)
+
+    async with state.cache_lock(video_id):
+        latest = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+        current_raw = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
+        if current_raw != raw or int(latest.get("lyrics_revision") or 0) != revision:
+            raise HTTPException(409, "Lyrics changed while saving; try again")
+        offset = float(latest.get("lyric_offset") or 0)
+
+    if target is not None:
+        target.update(lyrics=lines, lyrics_status="ready", lyrics_error=None, offset=offset)
     if state.current and state.current["id"] == video_id:
-        # The song on stage switches right away: time the new lines, then resend lyrics to the TV.
-        lines = lyrics.parse_lrc(chosen["syncedLyrics"])
-        lines = await asyncio.to_thread(worker.timed_lyrics, folder, chosen["syncedLyrics"], stems.path(folder, "vocals"), lines)
-        lyrics.line_starts(lines)
-        if state.current and state.current["id"] == video_id:
-            state.current.update(lyrics=lines, lyrics_rev=state.current.get("lyrics_rev", 0) + 1)
+        state.current.update(lyrics=lines, lyrics_status="ready", lyrics_error=None,
+                             lyrics_rev=state.current.get("lyrics_rev", 0) + (1 if changed else 0))
+        if changed:
             state.offset = 0
             state.lyrics_sent.clear()
-            await state.broadcast()
-    (folder / "lyrics.lrc").write_text(chosen["syncedLyrics"], encoding="utf-8")
-    meta["lyrics_identity"] = [meta["artist"], meta["title"]]
-    meta.pop("lyric_offset", None)  # a nudge for other lyrics no longer fits
-    worker.save_meta(folder, meta)
-    return {"saved": choice.id}
+    await state.broadcast()
+    return {"saved": choice.id, "changed": changed}
+
+@app.post("/api/songs/{video_id}/lyrics")
+async def choose_lyrics(video_id: str, choice: LyricChoice):
+    """Save the chosen version; a current song switches immediately."""
+    return await select_lyrics(video_id, choice)
+
+@app.get("/api/queue/{queue_key}/lyrics")
+async def queued_lyrics(queue_key: str):
+    item = queue_item(queue_key)
+    folder, meta = song_meta(item["id"])
+    raw = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
+    lines = []
+    try:
+        timed = json.loads((folder / "timed.json").read_text(encoding="utf-8"))
+        lines = (timed.get("lines") or []) if timed.get("key") == worker.timing_key(raw) else []
+    except (OSError, ValueError, TypeError):
+        lines = lyrics.parse_lrc(raw)
+    if not lines and raw:
+        lines = lyrics.parse_lrc(raw)
+    return {"key": item["key"], "id": item["id"], "artist": item["artist"], "title": item["title"],
+            "lyrics_status": item.get("lyrics_status", "missing"), "lyrics": lines,
+            "raw": raw, "offset": float(meta.get("lyric_offset") or item.get("offset") or 0),
+            "source": meta.get("lyrics_source")}
+
+@app.post("/api/queue/{queue_key}/lyrics")
+async def choose_queued_lyrics(queue_key: str, choice: LyricChoice):
+    item = queue_item(queue_key)
+    return await select_lyrics(item["id"], choice, item)
+
+@app.patch("/api/queue/{queue_key}/offset")
+async def set_queued_offset(queue_key: str, choice: OffsetChoice):
+    try:
+        item = await state.set_queue_offset(queue_key, choice.value)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await state.broadcast()
+    return {"key": item["key"], "id": item["id"], "offset": item["offset"]}
 
 @app.delete("/api/songs/{video_id}")
 async def delete_song(video_id: str):

@@ -432,6 +432,9 @@ body[data-theme=classic] #queue .ready-lamp{font-style:normal;color:#7dff9a;anim
 body[data-theme=classic] #queue .ready-lamp::before{content:'';display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:#7dff9a;box-shadow:0 0 6px #7dff9a;vertical-align:1px;animation:lcd-blink .5s steps(1) 3}
 @keyframes ready-lamp{80%{opacity:1;font-size:inherit}to{opacity:0;font-size:0}}
 body[data-theme=classic] #queue .row.ready:not(:first-child):has(.ready-lamp) .status-ko{display:none}
+body[data-theme=classic] #queue .lyrics-button{width:48px;height:32px;padding:0;border:0;border-radius:8px;background:linear-gradient(#3a3c47,#272830);box-shadow:0 3px 0 #0b0b0f;color:#fff;font:700 10px 'IBM Plex Sans KR',sans-serif}
+body[data-theme=classic] #queue .lyrics-button:not(:disabled){color:var(--yellow)}
+body[data-theme=classic] #queue .lyrics-status{font:500 10px 'IBM Plex Sans KR',sans-serif;color:#8f95d8}
 /* The ⋯ key and its menu (mockup P6): a navy machine menu with the song's number in LCD. */
 body[data-theme=classic] .song-more{right:4px;width:30px;height:30px;border-radius:8px;color:#8a8270;font:700 18px/1 'IBM Plex Sans KR',sans-serif}
 body[data-theme=classic] .song-more:hover{background:#0000000d;color:#1d1b16}
@@ -484,6 +487,12 @@ body[data-theme=classic] .lyric-option.busy{opacity:.95;box-shadow:inset 0 0 0 2
 body[data-theme=classic] .lyric-option.busy .cnt{font-size:0;color:transparent}
 body[data-theme=classic] .lyric-option.busy .cnt>*{display:none}
 body[data-theme=classic] .lyric-option.busy .cnt::after{content:'';display:inline-block;width:5px;height:12px;margin-right:16px;border-radius:1px;background:var(--cyan);box-shadow:8px 0 var(--cyan),16px 0 var(--cyan);animation:lcd-blink .9s steps(1) infinite}
+body[data-theme=classic] .lyric-timing{margin:12px 14px 0;padding:8px 10px;border-radius:10px;background:#101015;box-shadow:inset 0 2px 4px #000a,0 0 0 1px #2c2d38;color:#e8eaff}
+body[data-theme=classic] .lyric-timing .timing-label{color:#8f95d8;font:500 11px 'IBM Plex Sans KR',sans-serif}
+body[data-theme=classic] .lyric-timing b{font:700 16px 'Share Tech Mono',monospace;color:var(--lcd-on)}
+body[data-theme=classic] .lyric-timing button{height:32px;border:0;border-radius:8px;background:linear-gradient(#3a3c47,#272830);box-shadow:0 2px 0 #0b0b0f;color:#fff;font:700 11px 'IBM Plex Sans KR',sans-serif}
+body[data-theme=classic] .lyric-preview{margin:10px 14px 0;padding:10px 12px;border:1px solid #2c2d38;background:#101015;color:#cfe6ff}
+body[data-theme=classic] .lyric-preview p{color:#cfe6ff;font:500 12.5px/1.45 'IBM Plex Sans KR',sans-serif}
 body[data-theme=classic] .lyric-all{height:44px;margin-top:2px;border-radius:16px;background:linear-gradient(#3a3c47,#272830);box-shadow:inset 0 1px 0 #ffffff26,0 4px 0 #0b0b0f;color:#fff;font:700 13px 'IBM Plex Sans KR',sans-serif}
 /* Looking up: an LCD well with a chasing bar. Nothing found: a dashed card. A failure: a red-edged line. */
 body[data-theme=classic] .lyric-options .lyric-wait{display:flex;flex-direction:column;align-items:center;gap:10px;margin:10px 0 0;padding:18px 14px;border-radius:12px;background:var(--lcd);box-shadow:inset 0 0 0 2px #000,inset 0 0 0 3px #2b3c8e;text-align:center;font:700 14px 'IBM Plex Sans KR',sans-serif;color:#e8eaff}

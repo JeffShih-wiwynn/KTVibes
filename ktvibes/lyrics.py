@@ -156,6 +156,15 @@ def romanize(syllables: str) -> list[str]:
 def add_korean_romanization(lines: list[dict]) -> list[dict]:
     """Romanize each Korean syllable from its sung pronunciation (눈물이 -> nun mu ri, 못하게 -> mo ta ge)."""
     global _g2p
+    needs_g2p = any(
+        line.get("units") and HANGUL.search(line["text"]) and any(
+            HANGUL.search(unit[0]) and not (len(unit) > 3 and unit[3])
+            for unit in line["units"]
+        )
+        for line in lines
+    )
+    if not needs_g2p:
+        return lines
     if _g2p is None:
         from g2pk2 import G2p
         _g2p = G2p()
@@ -505,8 +514,9 @@ async def candidates(artist: str, title: str, duration: float, hints: tuple[str,
 
 async def fetch(artist: str, title: str, duration: float, hints: tuple[str, ...] = ()) -> dict:
     matches = await candidates(artist, title, duration, hints)
-    raw = matches[0].get("syncedLyrics", "") if matches else ""
-    return {"raw": raw, "lines": parse_lrc(raw)}
+    selected = matches[0] if matches else {}
+    raw = selected.get("syncedLyrics", "")
+    return {"id": selected.get("id"), "raw": raw, "lines": parse_lrc(raw)}
 
 if __name__ == "__main__":
     print(json.dumps(asyncio.run(fetch(sys.argv[1], sys.argv[2], float(sys.argv[3]))), ensure_ascii=False, indent=2))

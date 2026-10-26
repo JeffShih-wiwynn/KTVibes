@@ -28,6 +28,15 @@ class LyricsTests(unittest.TestCase):
         self.assertEqual(parse_title('Simple Plan - Perfect // Lyrics'), {'artist': 'Simple Plan', 'title': 'Perfect'})
         self.assertEqual(parse_title('Simple Plan - Perfect (Lyrics) 🎵'), {'artist': 'Simple Plan', 'title': 'Perfect'})
 
+    def test_fetch_returns_selected_record_id(self):
+        import asyncio
+        from unittest.mock import patch
+        from ktvibes import lyrics
+        selected = {'id': 42, 'trackName': 'Song', 'duration': 100, 'syncedLyrics': '[00:01.00]Lyrics'}
+        with patch.object(lyrics, 'candidates', return_value=[selected]):
+            result = asyncio.run(lyrics.fetch('Artist', 'Song', 100))
+        self.assertEqual(result['id'], 42)
+
 class YouTubeErrorTests(unittest.TestCase):
     def test_bot_check_is_explained(self):
         from ktvibes import youtube
@@ -284,6 +293,27 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             await state.control({'action': 'offset', 'delta': .5})
             self.assertEqual(json.loads(meta.read_text(encoding='utf-8')), {'title': '晴天', 'lyric_offset': 1.5})
 
+    async def test_queued_offset_does_not_change_current_and_follows_song(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            state = State()
+            state.restore(root / 'queue.json')
+            for video_id in ('aaaaaaaaaaa', 'bbbbbbbbbbb'):
+                song_folder = root / video_id
+                song_folder.mkdir()
+                (song_folder / 'meta.json').write_text(json.dumps({'lyric_offset': 0}), encoding='utf-8')
+            current = await state.add('aaaaaaaaaaa', 'A', 'Current')
+            queued = await state.add('bbbbbbbbbbb', 'B', 'Queued')
+            current['status'], current['duration'] = 'ready', 100
+            queued['status'], queued['duration'] = 'ready', 100
+            state.promote()
+            await state.set_queue_offset(queued['key'], -.1)
+            self.assertEqual(state.offset, 0)
+            self.assertEqual(json.loads((root / 'bbbbbbbbbbb' / 'meta.json').read_text())['lyric_offset'], -.1)
+            await state.control({'action': 'skip'})
+            self.assertIs(state.current, queued)
+            self.assertEqual(state.offset, -.1)
+
     async def test_classic_room_timer_holds_the_next_song_until_time_is_added(self):
         state = State()
         clock = unittest.mock.patch('ktvibes.queue.time.time')
@@ -421,6 +451,26 @@ class WorkerRunTests(unittest.IsolatedAsyncioTestCase):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_worker_metadata_paths_use_utf8(self):
+        import ast
+        import inspect
+        from ktvibes import worker
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            metadata = {'artist': '日本語', 'title': '周杰倫', 'lyrics_record_id': 42}
+            worker.save_meta(folder, metadata)
+            self.assertEqual(json.loads((folder / 'meta.json').read_text(encoding='utf-8')), metadata)
+        tree = ast.parse(inspect.getsource(worker.run))
+        reads = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == 'read_text'
+                 and isinstance(node.func.value, ast.Name) and node.func.value.id == 'meta_path']
+        self.assertEqual(len(reads), 6)
+        for read in reads:
+            encoding = next(keyword.value for keyword in read.keywords if keyword.arg == 'encoding')
+            self.assertIsInstance(encoding, ast.Constant)
+            self.assertEqual(encoding.value, 'utf-8')
+
     def test_old_stems_migrate_to_opus_with_gain(self):
         import tempfile
         from pathlib import Path
@@ -713,11 +763,35 @@ class LyricsMatchTests(unittest.TestCase):
         self.assertEqual(len(lines[1]['units'][0]), 3)
 
     def test_korean_romanization_follows_pronunciation(self):
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from ktvibes import lyrics
         from ktvibes.lyrics import add_korean_romanization, romanize
         self.assertEqual(romanize('실라면'), ['sil', 'la', 'myeon'])
         units = [['눈', 0, 1], ['물', 1, 2], ['이 ', 2, 3], ['좋', 3, 4], ['은', 4, 5]]
-        add_korean_romanization([{'t': 0, 'text': '눈물이 좋은', 'units': units}])
+        g2p = Mock(return_value='눈무리 조은')
+        with patch.object(lyrics, '_g2p', None), patch.dict(sys.modules, {'g2pk2': SimpleNamespace(G2p=Mock(return_value=g2p))}):
+            add_korean_romanization([{'t': 0, 'text': '눈물이 좋은', 'units': units}])
+        self.assertEqual(g2p.call_count, 1)
         self.assertEqual([u[3] for u in units], ['nun', 'mu', 'ri', 'jo', 'eun'])
+
+    def test_non_korean_lyrics_do_not_initialize_g2p(self):
+        import builtins
+        from ktvibes import lyrics
+        from ktvibes.lyrics import add_korean_romanization
+        lines = [
+            {'t': 0, 'text': '愛してる', 'units': [['愛', 0, 1]]},
+            {'t': 1, 'text': '我愛你', 'units': [['我', 1, 2]]},
+            {'t': 2, 'text': 'I love you', 'units': [['I love you', 2, 3]]},
+        ]
+        real_import = builtins.__import__
+        def reject_g2pk2(name, *args, **kwargs):
+            if name == 'g2pk2':
+                raise AssertionError('g2pk2 should not be imported')
+            return real_import(name, *args, **kwargs)
+        with unittest.mock.patch.object(lyrics, '_g2p', None), unittest.mock.patch.object(builtins, '__import__', side_effect=reject_g2pk2):
+            add_korean_romanization(lines)
 
     def test_aligner_letters_cover_all_scripts(self):
         from ktvibes.align import spoken_letters

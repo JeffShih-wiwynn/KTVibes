@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
 import soundfile as sf
 from . import align, guides, songbook, stems, youtube, lyrics
@@ -11,6 +12,9 @@ log = logging.getLogger(__name__)
 TIMING_VERSION = 10  # bump when alignment or guide output changes, so cached timing is rebuilt
 LYRICS_RECHECK = 7 * 86400  # a song LRCLIB had no lyrics for is looked up again after this long
 STARTED = time.time()  # energy-only timing (aligner failed) cached before this run is retried once
+
+def timing_key(raw: str) -> str:
+    return f"{TIMING_VERSION}:{hashlib.sha256(raw.encode()).hexdigest()}"
 
 def separate(source, destination):
     # Keep model imports off the server startup path.
@@ -37,9 +41,19 @@ def missing_tools() -> list[str]:
     return [name for name, exe in (("ffmpeg", "ffmpeg"), ("ffprobe", "ffprobe"), ("Node.js", "node")) if not shutil.which(exe)]
 
 def save_meta(folder: Path, meta: dict):
-    temporary = folder / "meta.tmp"
+    temporary = folder / f".meta.{uuid.uuid4().hex}.tmp"
     temporary.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(folder / "meta.json")
+
+def save_lyrics(folder: Path, raw: str):
+    """Atomically replace the selected LRC so readers never see a partial file."""
+    temporary = folder / f".lyrics.{uuid.uuid4().hex}.tmp"
+    if raw:
+        temporary.write_text(raw, encoding="utf-8")
+        temporary.replace(folder / "lyrics.lrc")
+    else:
+        temporary.unlink(missing_ok=True)
+        (folder / "lyrics.lrc").unlink(missing_ok=True)
 
 def fetch_video(video_id, folder, progress):
     """Runs alongside the audio work; a missing video only means the stage background."""
@@ -51,7 +65,7 @@ def fetch_video(video_id, folder, progress):
 
 def timed_lyrics(folder: Path, raw: str, samples_path: Path, lines: list[dict]) -> list[dict]:
     """Word timing and guides for these lyrics, reused from timed.json when the LRC text is unchanged."""
-    key = f"{TIMING_VERSION}:{hashlib.sha256(raw.encode()).hexdigest()}"
+    key = timing_key(raw)
     try:
         cached = json.loads((folder / "timed.json").read_text(encoding="utf-8"))
         # Energy-only timing (the aligner failed) is retried once per run, not on every play.
@@ -75,7 +89,7 @@ def timed_lyrics(folder: Path, raw: str, samples_path: Path, lines: list[dict]) 
         aligned = False
     lyrics.time_units(lines, energy)
     lines = lyrics.add_jyutping(guides.add_hangul(lyrics.add_korean_romanization(lyrics.add_pinyin(lyrics.add_romaji(lines)))))
-    temporary = folder / "timed.tmp"
+    temporary = folder / f".timed.{uuid.uuid4().hex}.tmp"
     temporary.write_text(json.dumps({"key": key, "aligned": aligned, "lines": lines}, ensure_ascii=False), encoding="utf-8")
     temporary.replace(folder / "timed.json")
     return lines
@@ -102,7 +116,7 @@ async def run(state, cache: Path):
             folder.mkdir(parents=True, exist_ok=True)
             meta_path = folder / "meta.json"
             try:
-                meta = json.loads(meta_path.read_text())
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 meta = {}
             # The (larger, optional) video downloads while the audio is fetched and separated.
@@ -124,7 +138,10 @@ async def run(state, cache: Path):
                     await state.broadcast()
                     meta["separation_seconds"], gain = await asyncio.to_thread(separate, folder / "audio.m4a", folder)
                 meta["stem_gain"] = gain
-                save_meta(folder, meta)  # the gain must survive even if a later step fails
+                async with state.cache_lock(item["id"]):
+                    latest = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+                    latest.update({k: meta[k] for k in ("stem_gain", "separation_seconds") if k in meta})
+                    save_meta(folder, latest)  # the gain must survive even if a later step fails
             check()
             if video and not video.done():
                 item["status"], item["step"], item["progress"] = "downloading", "video", 0.0
@@ -148,40 +165,80 @@ async def run(state, cache: Path):
                 item["music_end"] = known[1]
             item["gain"] = float(meta.get("stem_gain") or 1)
             item["status"], item["step"], item["progress"] = "syncing", None, None
+            item["lyrics_status"], item["lyrics_error"] = "processing", None
             await state.broadcast()
             identity = [item["artist"], item["title"]]
-            cached = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
+            async with state.cache_lock(item["id"]):
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    meta = {}
+                cached = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
             raw = ""
             same = meta.get("lyrics_identity") == identity
-            if same and lyrics.parse_lrc(cached):
+            manual = meta.get("lyrics_source") == "manual"
+            if (same or manual) and lyrics.parse_lrc(cached):
                 raw = cached
                 item["lyrics"] = lyrics.parse_lrc(cached)
+                item["lyrics_status"] = "ready"
             elif same and time.time() - meta.get("lyrics_checked", 0) < LYRICS_RECHECK:
                 pass  # LRCLIB had none recently; "Lyrics language…" on the remote still searches
             else:
                 try:
                     result = await lyrics.fetch(*identity, item["duration"], (meta.get("source_title") or "",))
-                    raw, item["lyrics"] = result["raw"], result["lines"]
-                    # A miss is remembered for a week, so a later LRCLIB addition is still picked up.
-                    meta["lyrics_identity"], meta["lyrics_checked"] = identity, time.time()
-                    meta.pop("lyric_offset", None)  # a nudge for other lyrics no longer fits
-                    if result["raw"]:
-                        (folder / "lyrics.lrc").write_text(result["raw"], encoding="utf-8")
-                    else:
-                        (folder / "lyrics.lrc").unlink(missing_ok=True)
+                    async with state.cache_lock(item["id"]):
+                        latest = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+                        latest_raw = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
+                        # A manual choice made while LRCLIB was being queried wins over the old result.
+                        if latest.get("lyrics_source") == "manual" and lyrics.parse_lrc(latest_raw):
+                            meta, raw = latest, latest_raw
+                            item["lyrics"] = lyrics.parse_lrc(raw)
+                        else:
+                            raw, item["lyrics"] = result["raw"], result["lines"]
+                            latest["lyrics_identity"], latest["lyrics_checked"] = identity, time.time()
+                            latest["lyrics_source"] = "automatic"
+                            latest["lyrics_revision"] = int(latest.get("lyrics_revision") or 0) + 1
+                            if result.get("id") is None:
+                                latest.pop("lyrics_record_id", None)
+                            else:
+                                latest["lyrics_record_id"] = result["id"]
+                            latest.pop("lyric_offset", None)  # a nudge for other lyrics no longer fits
+                            save_lyrics(folder, raw)
+                            meta = latest
+                    item["lyrics_status"] = "ready" if item["lyrics"] else "missing"
                 except Exception:
                     log.exception("Lyrics unavailable for %s", item["id"])
-                    item["lyrics_warning"] = "Lyrics unavailable; audio is ready."
+                    item["lyrics_status"], item["lyrics_error"] = "error", "Lyrics unavailable; audio is ready."
+            lyrics_revision = int(meta.get("lyrics_revision") or 0)
             if item["lyrics"]:
                 try:
                     item["lyrics"] = await asyncio.to_thread(timed_lyrics, folder, raw, stems.path(folder, "vocals"), item["lyrics"])
+                    # A manual selection may have arrived while alignment was running. Do not publish
+                    # the older result; retry once using the latest LRC and revision.
+                    async with state.cache_lock(item["id"]):
+                        latest = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+                        latest_raw = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
+                    if latest_raw != raw or int(latest.get("lyrics_revision") or 0) != lyrics_revision:
+                        raw, lyrics_revision = latest_raw, int(latest.get("lyrics_revision") or 0)
+                        item["lyrics"] = lyrics.parse_lrc(raw)
+                        item["lyrics"] = await asyncio.to_thread(timed_lyrics, folder, raw, stems.path(folder, "vocals"), item["lyrics"])
                     lyrics.line_starts(item["lyrics"])  # cheap, so kept out of the timing cache
+                    item["lyrics_status"] = "ready"
                 except Exception:
                     log.exception("Word timing unavailable for %s", item["id"])
-            item["offset"] = float(meta.get("lyric_offset") or 0)
+                    item["lyrics_status"], item["lyrics_error"] = "error", "Lyrics timing failed."
+            elif item["lyrics_status"] == "processing":
+                item["lyrics_status"] = "missing"
             meta.update(duration=item["duration"], artist=item["artist"], title=item["title"])
             item["number"] = songbook.assign(cache, meta)
-            save_meta(folder, meta)
+            async with state.cache_lock(item["id"]):
+                latest = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+                latest.update({"duration": item["duration"], "artist": item["artist"], "title": item["title"]})
+                if item.get("number") is not None:
+                    latest["number"] = item["number"]
+                meta = latest
+                item["offset"] = float(meta.get("lyric_offset") or 0)
+                save_meta(folder, meta)
             check()
             item["status"], item["step"], item["progress"] = "ready", None, None
             state.promote()
