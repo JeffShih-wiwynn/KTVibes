@@ -25,7 +25,7 @@ state = State()
 _plain_lookups: dict[tuple[str, str], asyncio.Task] = {}
 _plain_errors: dict[tuple[str, str], float] = {}
 _plain_selection_seq: dict[str, int] = {}
-PLAIN_MISSING_TTL = 7 * 86400
+PLAIN_MISSING_TTL = lyrics.PLAIN_MISSING_TTL
 PLAIN_ERROR_COOLDOWN = 30
 
 def _plain_identity(artist: str, title: str) -> list[str]:
@@ -65,24 +65,14 @@ def _cached_synced(folder: Path, target: dict) -> str:
     return raw if lyrics.STAMP.search(raw) and lyrics.lrc_display_text(raw).strip() else ""
 
 def _plain_cache_read(path: Path, identity: list[str], now: float) -> dict | None:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(value, dict):
-        return None
-    if value.get("identity") != identity:
-        return None
-    status = value.get("status")
-    if status == "ready" and isinstance(value.get("text"), str) and value["text"].strip() and len(value["text"].encode("utf-8")) <= 200_000:
-        return value
-    if status == "missing":
-        try:
-            if now - float(value.get("checked_at") or 0) < PLAIN_MISSING_TTL:
-                return value
-        except (TypeError, ValueError):
-            return None
-    return None
+    return lyrics.read_plain_cache(path, identity, now)
+
+def _publish_viewer_lyrics_source(target: dict, source: str) -> None:
+    """Keep Queue snapshots informed without sending lyric text or blocking cache locks."""
+    if target.get("viewer_lyrics_source") == source:
+        return
+    target["viewer_lyrics_source"] = source
+    asyncio.get_running_loop().create_task(state.broadcast(persist=False))
 
 def _viewer_result(target: dict, status: str, source: str | None = None, text: str = "", record_id=None) -> dict:
     return {"key": target["key"], "id": target["id"], "artist": target.get("artist", ""), "title": target.get("title", ""),
@@ -152,14 +142,19 @@ async def lyrics_view(target_key: str):
         folder.mkdir(parents=True, exist_ok=True)
         raw = _cached_synced(folder, target)
         if raw:
+            _publish_viewer_lyrics_source(target, "synced")
             return _viewer_result(target, "ready", "synced", lyrics.lrc_display_text(raw))
         cached = _plain_cache_read(plain_path, identity, time.time())
         if cached:
             if cached["status"] == "ready":
+                _publish_viewer_lyrics_source(target, "plain")
                 return _viewer_result(target, "ready", "plain", cached["text"], cached.get("record_id"))
+            _publish_viewer_lyrics_source(target, "missing")
             return _viewer_result(target, "missing")
         if time.time() - _plain_errors.get(lookup_key, 0) < PLAIN_ERROR_COOLDOWN:
+            _publish_viewer_lyrics_source(target, "error")
             return _viewer_result(target, "error")
+        _publish_viewer_lyrics_source(target, "processing")
         if not duration:
             try:
                 duration = json.loads((folder / "meta.json").read_text(encoding="utf-8")).get("duration")
@@ -177,6 +172,7 @@ async def lyrics_view(target_key: str):
         _plain_errors[lookup_key] = time.time()
         if _plain_lookups.get(lookup_key) is task:
             _plain_lookups.pop(lookup_key, None)
+        _publish_viewer_lyrics_source(target, "error")
         return _viewer_result(target, "error")
     if _plain_lookups.get(lookup_key) is task:
         _plain_lookups.pop(lookup_key, None)
@@ -187,21 +183,27 @@ async def lyrics_view(target_key: str):
     async with state.cache_lock(video_id):
         raw = _cached_synced(folder, current_target)
         if raw:
+            _publish_viewer_lyrics_source(current_target, "synced")
             return _viewer_result(current_target, "ready", "synced", lyrics.lrc_display_text(raw))
         # Another request may have committed a result while this request awaited LRCLIB.
         cached = _plain_cache_read(plain_path, identity, time.time())
         if cached:
             if cached["status"] == "ready":
+                _publish_viewer_lyrics_source(current_target, "plain")
                 return _viewer_result(current_target, "ready", "plain", cached["text"], cached.get("record_id"))
+            _publish_viewer_lyrics_source(current_target, "missing")
             return _viewer_result(current_target, "missing")
         if record is None:
             _plain_cache_write(plain_path, {"identity": identity, "record_id": None, "status": "missing", "checked_at": time.time(), "text": ""})
+            _publish_viewer_lyrics_source(current_target, "missing")
             return _viewer_result(current_target, "missing")
         text = record.get("text") if isinstance(record, dict) else None
         if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > 200_000:
+            _publish_viewer_lyrics_source(current_target, "error")
             return _viewer_result(current_target, "missing")
         value = {"identity": identity, "record_id": record.get("id"), "status": "ready", "checked_at": time.time(), "text": text.strip()}
         _plain_cache_write(plain_path, value)
+        _publish_viewer_lyrics_source(current_target, "plain")
         return _viewer_result(current_target, "ready", "plain", value["text"], value["record_id"])
 
 @app.get("/api/suggest")
@@ -415,7 +417,9 @@ async def choose_plain_lyrics(target_key: str, choice: LyricChoice):
         _plain_cache_write(folder / "plain_lyrics.json", value)
         synced_raw = _cached_synced(folder, current_target)
         if synced_raw:
+            _publish_viewer_lyrics_source(current_target, "synced")
             return {"saved": choice.id, "status": "ready", "source": "synced", "active": False}
+        _publish_viewer_lyrics_source(current_target, "plain")
         return {"saved": choice.id, "status": "ready", "source": "plain", "active": True, "text": value["text"]}
 
 class OffsetChoice(BaseModel):
@@ -486,10 +490,10 @@ async def select_lyrics(video_id: str, choice: LyricChoice, target=None):
         offset = float(latest.get("lyric_offset") or 0)
 
     if target is not None:
-        target.update(lyrics=lines, lyrics_status="ready", lyrics_error=None, offset=offset,
+        target.update(lyrics=lines, lyrics_status="ready", viewer_lyrics_source="synced", lyrics_error=None, offset=offset,
                       lyrics_rev=target.get("lyrics_rev", 0) + (1 if changed else 0))
     if state.current and state.current["id"] == video_id:
-        state.current.update(lyrics=lines, lyrics_status="ready", lyrics_error=None,
+        state.current.update(lyrics=lines, lyrics_status="ready", viewer_lyrics_source="synced", lyrics_error=None,
                              lyrics_rev=state.current.get("lyrics_rev", 0) + (1 if changed else 0))
         if changed:
             state.offset = 0

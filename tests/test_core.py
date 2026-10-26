@@ -11,6 +11,18 @@ from ktvibes.youtube import is_music, parse_title
 from ktvibes.queue import State
 
 class LyricsTests(unittest.TestCase):
+    def test_plain_cache_reader_reports_only_matching_utf8_ready_or_fresh_missing_entries(self):
+        from ktvibes.lyrics import read_plain_cache
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'plain_lyrics.json'
+            identity = ['artist', 'title']
+            path.write_text(json.dumps({'identity': identity, 'status': 'ready', 'text': '日本語 繁體中文 안녕'}, ensure_ascii=False), encoding='utf-8')
+            self.assertEqual(read_plain_cache(path, identity)['text'], '日本語 繁體中文 안녕')
+            self.assertIsNone(read_plain_cache(path, ['other', 'title']))
+            path.write_text(json.dumps({'identity': identity, 'status': 'missing', 'checked_at': 100}), encoding='utf-8')
+            self.assertEqual(read_plain_cache(path, identity, now=101)['status'], 'missing')
+            self.assertIsNone(read_plain_cache(path, identity, now=100 + 7 * 86400 + 1))
+
     def test_unicode_multistamp_and_offset(self):
         self.assertEqual(parse_lrc('[ar:周杰倫]\n[offset:-500]\n[00:02.50][00:04.000]你好 안녕\n[00:01.00]'),
                          [{'t': .5, 'text': ''}, {'t': 2.0, 'text': '你好 안녕'}, {'t': 3.5, 'text': '你好 안녕'}])
@@ -115,6 +127,14 @@ class MusicFilterTests(unittest.TestCase):
         self.assertFalse(is_music('Intro', 30))
 
 class QueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_entry_exposes_viewer_lyrics_source_without_full_lyrics(self):
+        state = State()
+        item = await state.add('abcdefghijk', 'A', 'Song')
+        self.assertEqual(item['viewer_lyrics_source'], 'unknown')
+        snapshot = state.snapshot(lyrics=False)
+        self.assertEqual(snapshot['upcoming'][0]['viewer_lyrics_source'], 'unknown')
+        self.assertNotIn('lyrics', snapshot['upcoming'][0])
+
     async def test_guide_cycles_only_through_modes_with_content(self):
         state = State()
         a = await state.add('abcdefghijk', 'IU', '좋은 날')

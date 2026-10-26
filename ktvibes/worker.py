@@ -166,7 +166,6 @@ async def run(state, cache: Path):
             item["gain"] = float(meta.get("stem_gain") or 1)
             item["status"], item["step"], item["progress"] = "syncing", None, None
             item["lyrics_status"], item["lyrics_error"] = "processing", None
-            await state.broadcast()
             identity = [item["artist"], item["title"]]
             async with state.cache_lock(item["id"]):
                 try:
@@ -174,13 +173,24 @@ async def run(state, cache: Path):
                 except (OSError, ValueError):
                     meta = {}
                 cached = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
+                plain_cache = lyrics.read_plain_cache(
+                    folder / "plain_lyrics.json",
+                    [lyrics.plain_identity(identity[0]), lyrics.plain_identity(identity[1])], time.time())
             raw = ""
             same = meta.get("lyrics_identity") == identity
             manual = meta.get("lyrics_source") == "manual"
             if (same or manual) and lyrics.parse_lrc(cached):
+                item["viewer_lyrics_source"] = "synced"
+            elif plain_cache and plain_cache.get("status") == "ready":
+                item["viewer_lyrics_source"] = "plain"
+            else:
+                item["viewer_lyrics_source"] = "processing"
+            await state.broadcast()
+            if (same or manual) and lyrics.parse_lrc(cached):
                 raw = cached
                 item["lyrics"] = lyrics.parse_lrc(cached)
                 item["lyrics_status"] = "ready"
+                item["viewer_lyrics_source"] = "synced"
             elif same and time.time() - meta.get("lyrics_checked", 0) < LYRICS_RECHECK:
                 pass  # LRCLIB had none recently; "Lyrics language…" on the remote still searches
             else:
@@ -193,8 +203,11 @@ async def run(state, cache: Path):
                         if latest.get("lyrics_source") == "manual" and lyrics.parse_lrc(latest_raw):
                             meta, raw = latest, latest_raw
                             item["lyrics"] = lyrics.parse_lrc(raw)
+                            item["viewer_lyrics_source"] = "synced"
                         else:
                             raw, item["lyrics"] = result["raw"], result["lines"]
+                            if lyrics.STAMP.search(raw) and lyrics.lrc_display_text(raw).strip():
+                                item["viewer_lyrics_source"] = "synced"
                             latest["lyrics_identity"], latest["lyrics_checked"] = identity, time.time()
                             latest["lyrics_source"] = "automatic"
                             latest["lyrics_revision"] = int(latest.get("lyrics_revision") or 0) + 1
@@ -239,6 +252,25 @@ async def run(state, cache: Path):
                 meta = latest
                 item["offset"] = float(meta.get("lyric_offset") or 0)
                 save_meta(folder, meta)
+                latest_raw = (folder / "lyrics.lrc").read_text(encoding="utf-8") if (folder / "lyrics.lrc").is_file() else ""
+                saved_identity = latest.get("lyrics_identity")
+                identity_matches = not (isinstance(saved_identity, (list, tuple)) and len(saved_identity) >= 2 and
+                    [lyrics.plain_identity(str(saved_identity[0])), lyrics.plain_identity(str(saved_identity[1]))] !=
+                    [lyrics.plain_identity(identity[0]), lyrics.plain_identity(identity[1])])
+                if identity_matches and lyrics.STAMP.search(latest_raw) and lyrics.lrc_display_text(latest_raw).strip():
+                    item["viewer_lyrics_source"] = "synced"
+                else:
+                    plain_cache = lyrics.read_plain_cache(
+                        folder / "plain_lyrics.json",
+                        [lyrics.plain_identity(identity[0]), lyrics.plain_identity(identity[1])], time.time())
+                    if plain_cache and plain_cache.get("status") == "ready":
+                        item["viewer_lyrics_source"] = "plain"
+                    elif plain_cache and plain_cache.get("status") == "missing":
+                        item["viewer_lyrics_source"] = "missing"
+                    elif item.get("lyrics_status") == "error" or item.get("viewer_lyrics_source") == "error":
+                        item["viewer_lyrics_source"] = "error"
+                    else:
+                        item["viewer_lyrics_source"] = "unknown"
             check()
             item["status"], item["step"], item["progress"] = "ready", None, None
             state.promote()

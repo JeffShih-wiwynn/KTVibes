@@ -167,17 +167,19 @@ addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(openLyricsDialog)op
 }
 // Queue. Rebuilt only when its songs or statuses change, so position reports never swap a button
 // out from under a tap; preparation progress updates in place. A drag holds rebuilds until it ends.
-let queueShape,dragging=null;
+let queueShape,dragging=null,swipingQueue=null;
 const RING=2*Math.PI*23;
 const statusText=item=>item.status==='ready'?'Ready':item.status==='error'?'Failed':prepLabel(item).text;
+const queueRenderShape=()=>JSON.stringify([!!state.current,...state.upcoming.map(i=>[i.key,i.title,i.artist,i.status,i.error])]);
 // Classic shows the machine's Korean status beside it.
 const STATUS_KO={queued:'다운로드 대기',downloading:'다운로드 중',separating:'보컬 분리 중',syncing:'가사 찾는 중',ready:'준비 완료',error:'준비 실패'};
 const statusKo=(item,index)=>index===0&&item.status==='ready'?'다음곡':STATUS_KO[item.status]||'';
 function showQueue(before){
  const count=state.upcoming.length;$('queue-count').textContent=$('dock-count').textContent=count;
  if(before&&count>before.upcoming.length&&!REDUCED.matches)for(const id of ['queue-count','dock-count']){const c=$(id);c.classList.remove('bump');void c.offsetWidth;c.classList.add('bump');}
- const shape=JSON.stringify([!!state.current,...state.upcoming.map(i=>[i.key,i.title,i.artist,i.status,i.error,i.lyrics_status])]);  // the empty notice reads differently while a song plays
- if(shape!==queueShape&&!dragging){
+ const shape=queueRenderShape();  // lyrics-source updates are patched into their button without rebuilding rows
+ if(shape!==queueShape&&!dragging&&!swipingQueue){
+  if(openSwipe?.classList.contains('queue-swipe'))closeSwipe();
   // A song that turns ready while queued flashes its ring once.
   const preparing=new Set(before?.upcoming.filter(i=>i.status!=='ready').map(i=>i.key));
   // FLIP: remember where each row was, rebuild, then animate rows from their old spots.
@@ -193,8 +195,9 @@ function showQueue(before){
   }
  }
  for(const [index,item] of state.upcoming.entries()){
-  const row=$('queue').querySelector(`[data-key="${item.key}"]`);if(!row)continue;
+  const row=$('queue').querySelector(`.queue-swipe[data-key="${item.key}"]`);if(!row)continue;
   row.querySelector('.status').textContent=statusText(item);row.querySelector('.status-ko').textContent=statusKo(item,index);row.querySelector('.prepbar')?.style.setProperty('--p',item.progress||0);
+  setQueueLyricsButton(row.querySelector('.lyrics-button'),item);
   const ring=row.querySelector('.ring');if(ring){ring.style.setProperty('--p',item.progress||0);ring.classList.toggle('busy',!item.progress&&item.status!=='ready');}
  }
 }
@@ -207,46 +210,98 @@ function emptyQueue(){
  box.append(lcd,icon,el('b','예약곡이 없어요','classic-only'),el('strong',state.current?'Nothing up next':'The queue is empty'),el('small',state.current?'Add a song and it plays when this one ends.':'Add a song and it starts right away.'),find);
  return box;
 }
-const GRIP='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
+const QUEUE_LYRICS_LABELS={processing:['Checking…','processing'],synced:['Synced','synced'],plain:['Plain','plain'],missing:['No lyrics','missing'],error:['Issue','error'],unknown:['Check lyrics','unknown']};
+function queueLyricsState(item){
+ const source=item.viewer_lyrics_source;
+ if(source&&source!=='unknown')return source;
+ if(item.lyrics_status==='processing')return 'processing';
+ if(item.lyrics_status==='ready')return 'synced';
+ if(item.lyrics_status==='error')return 'error';
+ return 'unknown';
+}
+function setQueueLyricsButton(button,item){
+ if(!button)return;
+ const source=queueLyricsState(item),[label]=QUEUE_LYRICS_LABELS[source]||QUEUE_LYRICS_LABELS.unknown;
+ button.textContent=label;button.dataset.lyricsSource=source;
+ button.setAttribute('aria-label',`${label} lyrics for ${item.title}. Open lyrics viewer and settings.`);
+}
 function queueRow(item,index,justReady){
- const row=el('article',undefined,`row ${item.status}`);row.dataset.key=item.key;
+ const wrap=el('div',undefined,'swipe queue-swipe');wrap.dataset.key=item.key;
+ const next=el('button','Next','queue-swipe-action queue-next');next.type='button';next.setAttribute('aria-label',`Move ${item.title} to play next`);next.onclick=()=>prioritizeQueueItem(item.key);
+ const remove=el('button','Remove','queue-swipe-action queue-remove');remove.type='button';remove.setAttribute('aria-label',`Remove ${item.title} from the queue`);remove.onclick=()=>removeQueueItem(item);
+ const row=el('article',undefined,`row ${item.status}`);
  const thumb=el('div',undefined,'thumb'),image=el('img',undefined,'art');image.src=thumbnail(item.id);image.alt='';thumb.append(image);
  // The ring shows while the song prepares, and once more as it turns ready.
  if(item.status!=='ready'&&item.status!=='error'||justReady&&item.status==='ready')thumb.insertAdjacentHTML('beforeend',`<svg class="ring" viewBox="0 0 52 52" style="--c:${RING}" aria-hidden="true"><circle class="track" cx="26" cy="26" r="23"/><circle class="fill" cx="26" cy="26" r="23"/></svg>`);
  if(justReady&&item.status==='ready')haptic(10);
  const info=el('div',undefined,'info'),line=el('p');if(item.number)line.append(el('span',String(item.number),'qnum classic-only'),' ');line.append(item.artist,...(justReady&&item.status==='ready'?[el('em','준비 완료','ready-lamp classic-only')]:[]),el('span',' · ','sep'),el('span',statusKo(item,index),'status-ko classic-only'),el('span',statusText(item),'status'));
- const lyricsState={processing:'Lyrics loading',ready:'Lyrics ready',missing:'No lyrics',error:'Lyrics error'}[item.lyrics_status]||'Lyrics loading';
- line.append(el('span',' · ','sep'),el('span',lyricsState,'lyrics-status'));
  info.append(el('h3',item.title),line);
  if(item.status!=='ready'&&item.status!=='error'){const bar=el('div',undefined,'prepbar classic-only');bar.append(el('i'));info.append(bar);}
  if(item.error){const retry=el('button','Retry','retry');retry.onclick=()=>send({action:'retry',key:item.key});info.append(el('p',item.error,'error'),retry);}
- const remove=el('button','×','row-button');remove.setAttribute('aria-label',`Remove ${item.title}`);
- remove.onclick=()=>{send({action:'remove',key:item.key});toast(`Removed ${item.title}`,{label:'Undo',run:()=>send({action:'undo'})});};
- const grip=el('button',undefined,'row-button grip');grip.innerHTML=GRIP;grip.setAttribute('aria-label',`Move ${item.title}. Arrow keys move it up or down.`);
- grip.onkeydown=e=>{const to=index+({ArrowUp:-1,ArrowDown:1}[e.key]||0);if(to!==index&&to>=0&&to<state.upcoming.length){e.preventDefault();move(index,to);}};
  // Classic: 우선 moves a song to sing next, as on the machine.
  const first=el('button','우선','row-button first classic-only');first.setAttribute('aria-label',`Play ${item.title} next`);first.hidden=index===0;
  first.onclick=()=>{haptic(8);move(index,0);toast(`${item.title} 우선예약`);};
- const lyricsButton=el('button','Lyrics','row-button lyrics-button');lyricsButton.setAttribute('aria-label',`Open lyrics settings for ${item.title}`);lyricsButton.onclick=()=>pickLyrics(item);
- row.append(el('span',String(index+1),'num'),thumb,info,lyricsButton,first,remove,grip);
- dragHandlers(row,grip);
- return row;
+ const lyricsButton=el('button',undefined,'row-button lyrics-button');setQueueLyricsButton(lyricsButton,item);lyricsButton.onclick=()=>pickLyrics(item);
+ const num=el('span',String(index+1),'num');num.tabIndex=0;num.setAttribute('role','group');num.setAttribute('aria-label',`Position ${index+1}. Focus and use the up or down arrow keys to reorder.`);
+ num.onkeydown=e=>{const to=index+({ArrowUp:-1,ArrowDown:1}[e.key]||0);if(to!==index&&to>=0&&to<state.upcoming.length){e.preventDefault();move(index,to);}};
+ row.append(num,thumb,info,lyricsButton,first);
+ wrap.append(next,remove,row);
+ queueSwipeHandlers(wrap,row,item.key);
+ dragHandlers(wrap,row);
+ return wrap;
 }
 function move(from,to){const keys=state.upcoming.map(i=>i.key);keys.splice(to,0,...keys.splice(from,1));send({action:'reorder',keys});}
-// Drag to reorder: the grip lifts a row at once; a long press anywhere else on it lifts it after 350 ms.
+function prioritizeQueueItem(key){
+ const index=state.upcoming.findIndex(item=>item.key===key);if(index<=0)return;
+ haptic(10);move(index,0);toast('Moved to next');
+}
+function removeQueueItem(item){
+ const wrap=$(`.queue-swipe[data-key="${item.key}"]`);if(openSwipe===wrap)closeSwipe();
+ send({action:'remove',key:item.key});toast(`Removed ${item.title}`,{label:'Undo',run:()=>send({action:'undo'})});
+}
+// Long-press a non-button part of a row for 350 ms to drag it to any position.
 document.addEventListener('touchmove',e=>{if(dragging)e.preventDefault();},{passive:false});
-function dragHandlers(row,grip){
+function dragHandlers(wrap,row){
  let press,startX,startY;
- grip.addEventListener('pointerdown',e=>{e.preventDefault();startDrag(row,e);});
  row.addEventListener('pointerdown',e=>{
   if(e.target.closest('button'))return;
-  startX=e.clientX;startY=e.clientY;press=setTimeout(()=>startDrag(row,e),350);
+  startX=e.clientX;startY=e.clientY;press=setTimeout(()=>startDrag(wrap,e),350);
  });
  const cancel=e=>{if(e.type!=='pointermove'||Math.hypot(e.clientX-startX,e.clientY-startY)>8)clearTimeout(press);};
  for(const type of ['pointermove','pointerup','pointercancel'])row.addEventListener(type,cancel);
 }
+function queueSwipeHandlers(wrap,row,key){
+ let start=null,dx=0,base=0,swiping=false,startedOnRemove=false;
+ wrap.addEventListener('pointerdown',e=>{
+  const action=e.target.closest('.queue-remove');
+  if((e.target.closest('button')&&!action)||(e.pointerType==='mouse'&&e.button!==0))return;
+  start={x:e.clientX,y:e.clientY};base=wrap.classList.contains('open')?-REVEAL:0;dx=base;swiping=false;
+  startedOnRemove=!!action&&base<0;
+ });
+ wrap.addEventListener('pointermove',e=>{
+  if(!start||dragging)return;
+  const mx=e.clientX-start.x,my=e.clientY-start.y;
+  if(!swiping){if(Math.abs(my)>8&&Math.abs(my)>Math.abs(mx)){start=null;return;}if(Math.abs(mx)<8)return;swiping=true;swipingQueue=wrap;wrap.setPointerCapture(e.pointerId);wrap.classList.add('dragging');if(openSwipe&&openSwipe!==wrap)closeSwipe();}
+  dx=Math.max(-REVEAL*1.25,Math.min(REVEAL*1.25,base+mx));row.style.transform=`translateX(${dx}px)`;
+ });
+ const end=()=>{
+  if(!start)return;start=null;wrap.classList.remove('dragging');if(!swiping){if(base<0&&!startedOnRemove)closeSwipe();finishQueueSwipe();return;}
+  row.dataset.swiped='1';
+  if(base<0){
+   if(dx>-REVEAL/2){wrap.classList.remove('open');row.style.transform='';if(openSwipe===wrap)openSwipe=null;}
+   else{wrap.classList.add('open');row.style.transform=`translateX(${-REVEAL}px)`;openSwipe=wrap;}
+  }else if(dx<-REVEAL/2){row.style.transform=`translateX(${-REVEAL}px)`;wrap.classList.add('open');openSwipe=wrap;}
+  else if(dx>REVEAL/2){row.style.transform='';prioritizeQueueItem(key);}
+  else row.style.transform='';
+  finishQueueSwipe();
+ };
+ const cancel=()=>{if(!start)return;start=null;wrap.classList.remove('dragging');row.style.transform=base<0?`translateX(${-REVEAL}px)`:'';finishQueueSwipe();};
+ wrap.addEventListener('pointerup',end);wrap.addEventListener('pointercancel',cancel);
+}
+function finishQueueSwipe(){swipingQueue=null;if(!dragging&&queueShape!==queueRenderShape()){queueShape=null;showQueue(state);}}
 function startDrag(row,e){
  if(dragging)return;
+ if(row.classList.contains('queue-swipe')&&openSwipe===row)closeSwipe();
  const rows=[...$('queue').children].filter(r=>r.dataset.key),from=rows.indexOf(row),boxes=rows.map(r=>r.getBoundingClientRect());
  dragging={row,from,to:from,y:e.clientY,rows,keys:rows.map(r=>r.dataset.key),boxes,height:boxes[from].height};
  row.classList.add('lifted');for(const r of rows)if(r!==row)r.classList.add('shifting');
@@ -328,9 +383,9 @@ function flyToQueue(source){
  outer.animate([{transform:'none'},{transform:`translateX(${dx}px)`}],{duration:650,easing:'cubic-bezier(.3,0,.7,1)',fill:'forwards'});
  inner.animate([{transform:'none',borderRadius:'8px'},{transform:`translateY(${dy}px) scale(.25) rotate(25deg)`,borderRadius:'50%'}],{duration:650,easing:dy>0?'cubic-bezier(.55,-0.5,.9,.5)':'cubic-bezier(.1,.5,.45,1.4)',fill:'forwards'}).onfinish=()=>outer.remove();
 }
-// Recent songs swipe left to reveal Delete; tapping it deletes the download.
+// Recent and Queue rows share the one-open-swipe behavior.
 const REVEAL=96;let openSwipe=null;
-function closeSwipe(){if(!openSwipe)return;openSwipe.classList.remove('open');openSwipe.querySelector('.result').style.transform='';openSwipe=null;}
+function closeSwipe(){if(!openSwipe)return;openSwipe.classList.remove('open');const surface=openSwipe.querySelector('.result,.row');if(surface)surface.style.transform='';openSwipe=null;}
 document.addEventListener('pointerdown',e=>{if(openSwipe&&!openSwipe.contains(e.target))closeSwipe();});
 // Shared two-tab reader/picker. The reader uses raw cached LRC/plain text, never TV timing data.
 async function pickLyrics(song,{followCurrent=false}={}){

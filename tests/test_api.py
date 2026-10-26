@@ -109,6 +109,7 @@ class APITests(unittest.TestCase):
             response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 9})
         self.assertEqual(response.status_code, 200)
         self.assertEqual((response.json()['source'], response.json()['active']), ('synced', False))
+        self.assertEqual(item['viewer_lyrics_source'], 'synced')
         cache = json.loads((folder / 'plain_lyrics.json').read_text(encoding='utf-8'))
         self.assertEqual((cache['record_id'], cache['text'], cache['origin']), (9, record['plainLyrics'], 'manual'))
         self.assertEqual(json.loads(meta_path.read_text(encoding='utf-8')), metadata)
@@ -124,6 +125,7 @@ class APITests(unittest.TestCase):
         with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value=record):
             response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 10})
         self.assertEqual((response.status_code, response.json()['source'], response.json()['text']), (200, 'plain', '愛してる'))
+        self.assertEqual(item['viewer_lyrics_source'], 'plain')
         cache_path = Path(self.temp.name) / item['id'] / 'plain_lyrics.json'
         self.assertTrue(cache_path.is_file())
         self.main.state.upcoming.remove(item)
@@ -151,6 +153,7 @@ class APITests(unittest.TestCase):
             first = self.client.get(f"/api/lyrics/view/{item['key']}").json()
             second = self.client.get(f"/api/lyrics/view/{item['key']}").json()
         self.assertEqual((first['record_id'], second['text'], first['source']), (55, '手動選取的日本語', 'plain'))
+        self.assertEqual(item['viewer_lyrics_source'], 'plain')
 
     def test_newer_manual_plain_selection_wins_concurrent_request_race(self):
         import json
@@ -198,6 +201,7 @@ class APITests(unittest.TestCase):
         with patch.object(self.main.lyrics, 'plain_record', side_effect=AssertionError('plain lookup should not run')):
             response = self.client.get(f"/api/lyrics/view/{item['key']}")
         self.assertEqual((response.json()['status'], response.json()['source'], response.json()['text']), ('ready', 'synced', '天青色等煙雨'))
+        self.assertEqual(item['viewer_lyrics_source'], 'synced')
         self.assertEqual(json.loads(meta_path.read_text(encoding='utf-8')), original)
         self.assertFalse((folder / 'plain_lyrics.json').exists())
 
@@ -214,6 +218,7 @@ class APITests(unittest.TestCase):
             first = self.client.get(f"/api/lyrics/view/{item['key']}").json()
             second = self.client.get(f"/api/lyrics/view/{item['key']}").json()
         self.assertEqual((first['source'], first['record_id'], second['text']), ('plain', 9, '日本語と繁體中文 안녕'))
+        self.assertEqual(item['viewer_lyrics_source'], 'plain')
         self.assertEqual(mocked.call_count, 1)
         cache = json.loads((folder / 'plain_lyrics.json').read_text(encoding='utf-8'))
         self.assertEqual(cache['identity'], ['codylee', '我愛你'])
@@ -263,6 +268,7 @@ class APITests(unittest.TestCase):
         folder = Path(self.temp.name) / item['id']; folder.mkdir()
         with patch.object(self.main.lyrics, 'plain_record', new_callable=AsyncMock, return_value=None) as mocked:
             self.assertEqual(self.client.get(f"/api/lyrics/view/{item['key']}").json()['status'], 'missing')
+            self.assertEqual(item['viewer_lyrics_source'], 'missing')
             self.client.get(f"/api/lyrics/view/{item['key']}")
             self.assertEqual(mocked.call_count, 1)
             cache_path = folder / 'plain_lyrics.json'

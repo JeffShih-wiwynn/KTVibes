@@ -25,7 +25,7 @@ body[data-theme=classic] .seg button[aria-pressed=true]{color:var(--on-lime)}
 body[data-theme=classic] .searchbar:focus-within{border-color:#ffe14a66}
 body[data-theme=classic] :is(.tag,.presets button[aria-pressed=true]){background:#ffe14a22;border-color:#ffe14a66}
 body[data-theme=classic] .empty-icon{background:#ffe14a1a}
-body[data-theme=classic] .row.lifted{box-shadow:0 18px 40px #000c,0 0 0 1px #ffe14a44}
+body[data-theme=classic] :is(.row.lifted,.queue-swipe.lifted .row){box-shadow:0 18px 40px #000c,0 0 0 1px #ffe14a44}
 body[data-theme=classic] .lyric-sheet-panel{border-radius:14px 14px 0 0;border-color:#ff3ea555}
 /* Classic polish (design review): one type family, distinct surfaces (panels vs buttons), digital read-outs for numbers. */
 body[data-theme=classic] :is(h1,h2,h3,.brand,.empty strong,.dock .info strong,.stepper button){font-family:'IBM Plex Sans KR','Noto Sans CJK KR',sans-serif}
@@ -208,18 +208,20 @@ body[data-theme=classic] #queue-heading h2 small{margin-left:4px;font:700 10px '
 body[data-theme=classic] #queue-count{margin-left:auto;padding:0;background:none;font:14px DSEG7,monospace;color:var(--cyan)}
 body[data-theme=classic] .qtotal{font:700 11px 'IBM Plex Sans KR',sans-serif;color:#cfd3ff;letter-spacing:.06em}
 body[data-theme=classic] #queue{grid-template-columns:minmax(0,1fr);margin-top:0;padding:4px;border-radius:0 0 14px 14px;overflow:hidden;background:var(--lcd);box-shadow:inset 0 0 0 2px #000,inset 0 0 0 4px #2b3c8e}
-body[data-theme=classic] #queue .row{gap:10px;padding:10px 10px 10px 14px;border:0;border-top:1px solid #ffffff10;border-radius:0;background:none}
-body[data-theme=classic] #queue .row:first-child{border-top:0;background:#ffe0331a;box-shadow:inset 3px 0 0 var(--yellow)}
+body[data-theme=classic] #queue .queue-swipe{border-top:1px solid #ffffff10;background:var(--lcd)}
+body[data-theme=classic] #queue .queue-swipe:first-child{border-top:0}
+body[data-theme=classic] #queue .row{gap:10px;padding:10px 10px 10px 14px;border:0;border-radius:0;background:none}
+body[data-theme=classic] #queue .queue-swipe:first-child .row{background:#ffe0331a;box-shadow:inset 3px 0 0 var(--yellow)}
 body[data-theme=classic] #queue .thumb{display:none}
 body[data-theme=classic] #queue .num{width:22px;font:400 17px 'Black Han Sans',sans-serif;color:#6f76c8}
-body[data-theme=classic] #queue .row:first-child .num{color:var(--yellow)}
+body[data-theme=classic] #queue .queue-swipe:first-child .num{color:var(--yellow)}
 body[data-theme=classic] #queue h3{font:700 14px 'IBM Plex Sans KR',sans-serif;color:#fff}
 body[data-theme=classic] #queue p{font:500 12px 'IBM Plex Sans KR',sans-serif;color:#8f95d8}
 .qnum{margin-right:2px;font:11px DSEG7,monospace;color:var(--lcd-on)}
 body[data-theme=classic] #queue .status-ko{margin-right:4px;color:#aab0ff}
-body[data-theme=classic] #queue .row:first-child .status-ko{color:var(--yellow)}
+body[data-theme=classic] #queue .queue-swipe:first-child .row .status-ko{color:var(--yellow)}
 body[data-theme=classic] #queue .row.ready .status{display:none}
-body[data-theme=classic] #queue .row.ready:not(:first-child) :is(.sep,.status-ko){display:none}
+body[data-theme=classic] #queue .queue-swipe:not(:first-child) .row.ready :is(.sep,.status-ko){display:none}
 body[data-theme=classic] #queue .row:not(.ready):not(.error) :is(.status,.status-ko){color:#ffb86b}
 body[data-theme=classic] #queue .row.queued :is(.status,.status-ko){color:#aab0ff}
 .prepbar{height:4px;margin-top:5px;border-radius:2px;background:#ffffff14;overflow:hidden}
@@ -230,16 +232,20 @@ body[data-theme=classic] #queue .row.error .num{color:#ff6b6b}
 body[data-theme=classic] #queue .row.error .status-ko{color:#ff8a8a}
 body[data-theme=classic] #queue .row.error .status{display:none}
 body[data-theme=classic] #queue .error{margin-top:2px;font:500 11.5px 'IBM Plex Sans KR',sans-serif;color:#ff8a8a}
-/* Row keys: 우선 (orange), 취소 (grey), 재시도 (orange), and a dotted grip. */
-body[data-theme=classic] #queue :is(.row-button.first,.row-button:not(.grip),.retry){width:auto;height:30px;padding:0 9px;border:0;border-radius:9px;background:linear-gradient(#3a3c47,#272830);box-shadow:inset 0 1px 0 #ffffff26,0 2px 0 #0b0b0f;color:#fff;font:700 11px 'IBM Plex Sans KR',sans-serif}
+/* Classic Queue actions: 우선 (orange), retry (orange), and lyrics status. */
+body[data-theme=classic] #queue :is(.row-button.first,.retry){width:auto;height:30px;padding:0 9px;border:0;border-radius:9px;background:linear-gradient(#3a3c47,#272830);box-shadow:inset 0 1px 0 #ffffff26,0 2px 0 #0b0b0f;color:#fff;font:700 11px 'IBM Plex Sans KR',sans-serif}
 body[data-theme=classic] #queue :is(.row-button.first,.retry){background:linear-gradient(#ffa133,#d9700b);box-shadow:inset 0 1px 0 #fff4,0 2px 0 #6e3502}
-body[data-theme=classic] #queue .row-button:not(.grip):not(.first){font-size:0}
-body[data-theme=classic] #queue .row-button:not(.grip):not(.first)::after{content:'취소';font:700 11px 'IBM Plex Sans KR',sans-serif}
 body[data-theme=classic] #queue .row .info .retry{margin-top:6px;font-size:0}
 body[data-theme=classic] #queue .retry::after{content:'재시도 RETRY';font:700 11px 'IBM Plex Sans KR',sans-serif}
-body[data-theme=classic] #queue .grip{width:22px;height:30px;color:#cfd3ff}
-body[data-theme=classic] #queue .grip svg{width:16px;height:16px;fill:currentColor}
-body[data-theme=classic] #queue .row.lifted{border-radius:12px;background:linear-gradient(#34358a,#232466);box-shadow:inset 0 0 0 2px var(--yellow),0 14px 26px #000c,0 4px 0 #05061a;transform:rotate(-1.5deg) scale(1.03)}
+body[data-theme=classic] #queue .lyrics-button{min-width:48px;max-width:96px;height:30px;padding:0 7px;border:0;border-radius:8px;background:linear-gradient(#3a3c47,#272830);box-shadow:0 3px 0 #0b0b0f;font:700 10px 'IBM Plex Sans KR',sans-serif}
+body[data-theme=classic] #queue .lyrics-button[data-lyrics-source=processing]{color:#ffb86b}
+body[data-theme=classic] #queue .lyrics-button[data-lyrics-source=synced]{color:#7dff9a}
+body[data-theme=classic] #queue .lyrics-button[data-lyrics-source=plain]{color:#aab0ff}
+body[data-theme=classic] #queue .lyrics-button[data-lyrics-source=missing],body[data-theme=classic] #queue .lyrics-button[data-lyrics-source=unknown]{color:#8f95d8}
+body[data-theme=classic] #queue .lyrics-button[data-lyrics-source=error]{color:#ff8a8a}
+body[data-theme=classic] #queue .queue-next{background:linear-gradient(#ffa133,#d9700b);color:#201807;font:700 12px 'IBM Plex Sans KR',sans-serif}
+body[data-theme=classic] #queue .queue-remove{background:linear-gradient(#ea4651,#b01f2a);color:#fff;font:700 12px 'IBM Plex Sans KR',sans-serif}
+body[data-theme=classic] #queue .queue-swipe.lifted .row{border-radius:0;background:linear-gradient(#34358a,#232466);box-shadow:inset 0 0 0 2px var(--yellow),0 14px 26px #000c,0 4px 0 #05061a;transform:rotate(-1.5deg) scale(1.03)}
 /* Empty: the table stays, with a ghosted 00 and a red 노래 찾기 key. */
 body[data-theme=classic] #queue .empty{display:flex;flex-direction:column;align-items:center;gap:4px;padding:22px 16px 20px;border-radius:0;background:none;animation:none}
 body[data-theme=classic] #queue .empty .lcd{font-size:40px}
@@ -415,12 +421,9 @@ body[data-theme=classic] #queue .empty .lcd.dim{opacity:.35}
 body[data-theme=classic] #queue .ready-lamp{font-style:normal;color:#7dff9a;animation:ready-lamp 3.2s ease-in forwards}
 body[data-theme=classic] #queue .ready-lamp::before{content:'';display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:#7dff9a;box-shadow:0 0 6px #7dff9a;vertical-align:1px;animation:lcd-blink .5s steps(1) 3}
 @keyframes ready-lamp{80%{opacity:1;font-size:inherit}to{opacity:0;font-size:0}}
-body[data-theme=classic] #queue .row.ready:not(:first-child):has(.ready-lamp) .status-ko{display:none}
+body[data-theme=classic] #queue .queue-swipe:not(:first-child) .row.ready:has(.ready-lamp) .status-ko{display:none}
 @media(max-width:390px){body[data-theme=classic] #hero-lyrics{width:44px;padding:0;justify-content:center;gap:0}body[data-theme=classic] #hero-lyrics span{display:none}}
 @media(max-width:360px){body[data-theme=classic] .hero-actions{gap:6px}body[data-theme=classic] #hero-play,body[data-theme=classic] #skip{padding-left:10px;padding-right:10px}}
-body[data-theme=classic] #queue .lyrics-button{width:48px;height:32px;padding:0;border:0;border-radius:8px;background:linear-gradient(#3a3c47,#272830);box-shadow:0 3px 0 #0b0b0f;color:#fff;font:700 10px 'IBM Plex Sans KR',sans-serif}
-body[data-theme=classic] #queue .lyrics-button:not(:disabled){color:var(--yellow)}
-body[data-theme=classic] #queue .lyrics-status{font:500 10px 'IBM Plex Sans KR',sans-serif;color:#8f95d8}
 /* The ⋯ key and its menu (mockup P6): a navy machine menu with the song's number in LCD. */
 body[data-theme=classic] .song-more{right:4px;width:30px;height:30px;border-radius:8px;color:#8a8270;font:700 18px/1 'IBM Plex Sans KR',sans-serif}
 body[data-theme=classic] .song-more:hover{background:#0000000d;color:#1d1b16}

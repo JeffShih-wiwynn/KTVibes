@@ -186,7 +186,7 @@ class State:
     @staticmethod
     def entry(video_id, artist, title):
         return {"key": uuid.uuid4().hex, "id": video_id, "artist": artist, "title": title,
-                "status": "queued", "lyrics": [], "lyrics_status": "processing", "lyrics_error": None,
+                "status": "queued", "lyrics": [], "lyrics_status": "processing", "viewer_lyrics_source": "unknown", "lyrics_error": None,
                 "duration": 0, "error": None}
 
     async def remember_offset(self):

@@ -3,6 +3,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 import unicodedata
 
 STAMP = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
@@ -12,6 +13,26 @@ LRC_META = re.compile(r"\[(?:ar|ti|al|by|re|ve|length|offset|kana|la):[^]]*\]", 
 # Chinese/Japanese/Korean highlight per character; other scripts per word.
 CJK = "\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef"
 UNIT = re.compile(rf"[{CJK}]\s*|[^\s{CJK}]+\s*|\s+")
+PLAIN_MISSING_TTL = 7 * 86400
+
+def read_plain_cache(path, identity: list[str], now: float | None = None) -> dict | None:
+    """Return a usable plain-lyrics cache record for this normalized song identity."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("identity") != identity:
+        return None
+    status = value.get("status")
+    if status == "ready" and isinstance(value.get("text"), str) and value["text"].strip() and len(value["text"].encode("utf-8")) <= 200_000:
+        return value
+    if status == "missing":
+        try:
+            if (time.time() if now is None else now) - float(value.get("checked_at") or 0) < PLAIN_MISSING_TTL:
+                return value
+        except (TypeError, ValueError):
+            pass
+    return None
 
 def split_units(text: str) -> list[str]:
     return UNIT.findall(text)
