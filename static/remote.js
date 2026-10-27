@@ -1,6 +1,6 @@
 import {classicRemote,toastParts,emptyNote,secondsLeft} from './classic-remote.js';
 import {$,el,connect,api,clock,throttle,prepLabel,syncRanges,REDUCED,thumbnail} from './shared.js';
-let state,classicUi,openLyricsDialog;
+let state,classicUi,openLyricsDialog,seekDrag=null,seekPending=null;
 const SPRING='cubic-bezier(.38,1.21,.22,1)';
 const haptic=pattern=>{try{navigator.vibrate?.(pattern);}catch{}};
 function showImage(img,src){if(img.getAttribute('src')!==src){if(src)img.src=src;else img.removeAttribute('src');}img.hidden=!src;}
@@ -16,7 +16,7 @@ function toast(text,action,kind){
 }
 const send=connect('remote',render,message=>toast(message,undefined,'err'));
 function render(next){
- const before=state;state=next;state.received=Date.now()/1000;openLyricsDialog?.onState(before,state);
+ const before=state;state=next;state.received=Date.now()/1000;if(seekPending&&state.seek_id!==seekPending.seekId)seekPending=null;openLyricsDialog?.onState(before,state);
  // The header pill reports the TV, since that decides whether anything can play.
  $('connection').textContent=!state.player_connected?'Open /tv on a device':state.player_audio?'Device ready':'Tap Enable sound on the device';$('connection').classList.toggle('warn',!state.player_audio);$('connection').classList.toggle('off',!state.player_connected);
  document.body.dataset.theme=state.theme||'default';showNow(!before);showControls(before);showQueue(before);showClassic();classicUi?.render(state);syncResultCards();
@@ -53,12 +53,38 @@ function showHero(on,first){
 function showPosition(){
  if(!state)return;
  const live=state.current&&state.playing&&state.position>0?Date.now()/1000-state.received:0;
- const position=Math.min(state.position+live,state.current?.duration||0),fraction=state.current?.duration?position/state.current.duration:0;
+ let position=Math.min(state.position+live,state.current?.duration||0);
+ if(seekDrag?.mode==='horizontal')position=seekDrag.preview;
+ else if(seekPending){if(state.current?.key!==seekPending.key||Date.now()>seekPending.expires)seekPending=null;else position=seekPending.position;}
+ const fraction=state.current?.duration?position/state.current.duration:0;
  for(const id of ['hero-bar','dock-bar'])$(id).style.setProperty('--p',fraction);
- $('hero-position').textContent=clock(position);$('hero-bar').setAttribute('aria-valuetext',clock(position));
+ $('hero-bar').classList.toggle('scrubbing',seekDrag?.mode==='horizontal');
+ $('hero-position').textContent=clock(position);$('hero-bar').setAttribute('aria-valuetext',clock(position));$('hero-bar').setAttribute('aria-valuenow',position);$('hero-bar').setAttribute('aria-valuemax',state.current?.duration||0);
 }
 setInterval(showPosition,500);
-$('hero-bar').onclick=e=>{if(!state?.current)return;const box=e.currentTarget.getBoundingClientRect();send({action:'seek',position:Math.max(0,Math.min(1,(e.clientX-box.left)/box.width))*state.current.duration});};
+const seekBar=$('hero-bar');
+seekBar.onpointerdown=e=>{
+ if(!state?.current?.duration||(e.pointerType==='mouse'&&e.button!==0))return;
+ const box=seekBar.getBoundingClientRect(),position=Math.min(state.position+(state.playing?Date.now()/1000-state.received:0),state.current.duration),thumb=box.left+(position/state.current.duration)*box.width;
+ if(Math.abs(e.clientX-thumb)>22)return;
+ seekDrag={id:e.pointerId,key:state.current.key,x:e.clientX,y:e.clientY,mode:'pending',preview:position};seekBar.setPointerCapture(e.pointerId);
+};
+seekBar.onpointermove=e=>{
+ if(!seekDrag||seekDrag.id!==e.pointerId)return;
+ const dx=e.clientX-seekDrag.x,dy=e.clientY-seekDrag.y;
+ if(seekDrag.mode==='pending'&&Math.max(Math.abs(dx),Math.abs(dy))>=8){
+  if(Math.abs(dx)>Math.abs(dy)*1.2)seekDrag.mode='horizontal';
+  else if(Math.abs(dy)>Math.abs(dx)*1.2)seekDrag.mode='vertical';
+ }
+ if(seekDrag.mode==='horizontal'&&state.current?.key===seekDrag.key){const box=seekBar.getBoundingClientRect();seekDrag.preview=Math.max(0,Math.min(1,(e.clientX-box.left)/box.width))*state.current.duration;showPosition();}
+};
+seekBar.onpointerup=e=>{
+ if(!seekDrag||seekDrag.id!==e.pointerId)return;
+ const drag=seekDrag;seekDrag=null;
+ if(drag.mode==='horizontal'&&state.current?.key===drag.key){seekPending={key:drag.key,position:drag.preview,seekId:state.seek_id,expires:Date.now()+1500};send({action:'seek',position:drag.preview});}
+ showPosition();
+};
+seekBar.onpointercancel=e=>{if(seekDrag?.id===e.pointerId)seekDrag=null;showPosition();};
 $('hero-bar').onkeydown=e=>{const step={ArrowLeft:-5,ArrowRight:5}[e.key];if(step&&state?.current){e.preventDefault();send({action:'seek',position:state.position+step});}};
 for(const [id,delta] of [['hero-offset-earlier',-.5],['hero-offset-later',.5]])$(id).onclick=()=>{if(state?.current)send({action:'offset',delta});};
 const playPause=()=>{haptic(8);send({action:state?.playing?'pause':'play'});};
@@ -120,6 +146,39 @@ function rollKey(key,direction){
 $('key-down').onclick=()=>{haptic(8);send({action:'key',value:state.key-1});};
 $('key-up').onclick=()=>{haptic(8);send({action:'key',value:state.key+1});};
 $('key-reset').onclick=()=>{send({action:'speed',value:1});send({action:'key',value:0});};
+function dragOnlyRange(input){
+ const control=el('div',undefined,'range-control'),hit=el('div',undefined,'range-hit');
+ input.before(control);control.append(input,hit);hit.setAttribute('aria-hidden','true');
+ let gesture=null;
+ const geometry=()=>{
+  const rect=input.getBoundingClientRect(),classicMix=document.body.dataset.theme==='classic'&&input.closest('.mixline'),left=rect.left+(classicMix?52:2),width=Math.max(1,rect.width-(classicMix?62:4));
+  return {left,width};
+ };
+ const ratio=()=>{const min=Number(input.min)||0,max=Number(input.max)||100;return Math.max(0,Math.min(1,(Number(input.value)-min)/(max-min||1)));};
+ const update=x=>{
+  const {left,width}=geometry(),min=Number(input.min)||0,max=Number(input.max)||100,step=Number(input.step)||0,value=min+Math.max(0,Math.min(1,(x-left)/width))*(max-min);
+  input.value=String(step?min+Math.round((value-min)/step)*step:value);
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+ };
+ hit.onpointerdown=e=>{
+  if(input.disabled||(e.pointerType==='mouse'&&e.button!==0))return;
+  const {left,width}=geometry(),thumb=left+ratio()*width;
+  if(Math.abs(e.clientX-thumb)>22)return;
+  input.focus({preventScroll:true});gesture={id:e.pointerId,x:e.clientX,y:e.clientY,mode:'pending'};hit.setPointerCapture(e.pointerId);
+ };
+ hit.onpointermove=e=>{
+  if(!gesture||gesture.id!==e.pointerId)return;
+  const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
+  if(gesture.mode==='pending'&&Math.max(Math.abs(dx),Math.abs(dy))>=8){
+   if(Math.abs(dx)>Math.abs(dy)*1.2)gesture.mode='horizontal';
+   else if(Math.abs(dy)>Math.abs(dx)*1.2)gesture.mode='vertical';
+  }
+  if(gesture.mode==='horizontal')update(e.clientX);
+ };
+ const finish=e=>{if(gesture?.id===e.pointerId)gesture=null;};
+ hit.onpointerup=finish;hit.onpointercancel=finish;
+}
+for(const id of ['vocal','music','speed','lyric-scale'])dragOnlyRange($(id));
 for(const [id,action] of [['vocal','vocal'],['music','music'],['speed','speed'],['lyric-scale','lyric_scale']]){const sendValue=throttle(value=>send({action,value}));$(id).oninput=()=>sendValue(Number($(id).value));}
 // Presets set both sliders, gliding there so the change is visible; A cappella is the singer alone.
 let gliding=false;
@@ -152,7 +211,9 @@ $('hero-lyrics').onclick=()=>{if(state?.current)pickLyrics(state.current,{follow
 function openSheet(){document.body.classList.add('sheet-open');$('sheet').inert=false;haptic(8);requestAnimationFrame(()=>SEGMENTED.forEach(placePill));}
 function closeSheet(){document.body.classList.remove('sheet-open');$('sheet').inert=true;}
 $('open-controls').onclick=()=>document.body.dataset.theme==='classic'?classicUi.setTab('settings'):openSheet();
-$('scrim').onclick=$('sheet-handle').onclick=closeSheet;
+$('scrim').onclick=closeSheet;
+let suppressHandleClick=false;
+$('sheet-handle').onclick=()=>{if(suppressHandleClick){suppressHandleClick=false;return;}closeSheet();};
 // Classic theme: room time in Settings. Classic is always two-line lyrics.
 function showClassic(){const on=state.theme==='classic';$('room-time').hidden=!on;document.querySelector('[data-action=lyric_mode]').closest('.seg-row').hidden=on;roomLeft();}
 function roomLeft(){if(!state?.room_ends)return;const left=secondsLeft(state),end=new Date(state.room_ends*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
@@ -161,12 +222,13 @@ function roomLeft(){if(!state?.room_ends)return;const left=secondsLeft(state),en
 setInterval(roomLeft,1000);
 for(const b of document.querySelectorAll('[data-minutes]'))b.onclick=()=>{haptic(6);send({action:'add_time',minutes:+b.dataset.minutes});};
 addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(openLyricsDialog)openLyricsDialog.close();else if(document.body.classList.contains('sheet-open'))closeSheet();});
-// Drag the sheet down by its top to dismiss it.
+// Drag only the handle to dismiss the settings sheet, leaving the content area free to scroll.
 {
- const sheet=$('sheet');let startY=null;
- sheet.addEventListener('pointerdown',e=>{if(document.body.dataset.theme==='classic')return;if(sheet.scrollTop>0||e.target.closest('input,button:not(.handle)'))return;startY=e.clientY;sheet.style.transition='none';});
- addEventListener('pointermove',e=>{if(startY!==null)sheet.style.transform=`translateY(${Math.max(0,e.clientY-startY)}px)`;});
- addEventListener('pointerup',e=>{if(startY===null)return;const moved=e.clientY-startY;startY=null;sheet.style.transition='';sheet.style.transform='';if(moved>100)closeSheet();});
+ const sheet=$('sheet'),handle=$('sheet-handle');let startY=null,movedHandle=false;
+ handle.onpointerdown=e=>{if(document.body.dataset.theme==='classic'||(e.pointerType==='mouse'&&e.button!==0))return;e.preventDefault();startY=e.clientY;movedHandle=false;sheet.style.transition='none';handle.setPointerCapture(e.pointerId);};
+ handle.onpointermove=e=>{if(startY===null)return;const distance=Math.max(0,e.clientY-startY);if(distance>8)movedHandle=true;sheet.style.transform=`translateY(${distance}px)`;};
+ handle.onpointerup=e=>{if(startY===null)return;const distance=e.clientY-startY;startY=null;sheet.style.transition='';sheet.style.transform='';suppressHandleClick=movedHandle;if(movedHandle)setTimeout(()=>{suppressHandleClick=false;},300);if(distance>100)closeSheet();};
+ handle.onpointercancel=()=>{startY=null;sheet.style.transition='';sheet.style.transform='';};
 }
 // Queue. Rebuilt only when its songs or statuses change, so position reports never swap a button
 // out from under a tap; preparation progress updates in place. A drag holds rebuilds until it ends.

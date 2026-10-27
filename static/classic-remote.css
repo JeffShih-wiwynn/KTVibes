@@ -67,7 +67,7 @@ body[data-theme=classic] .tabs{position:fixed;left:0;right:0;bottom:0;z-index:30
 body[data-theme=classic] .toast,body[data-theme=classic] .dock.away~.toast{bottom:calc(84px + env(safe-area-inset-bottom))}
 /* 설정: the settings sheet as the tab's page, room time first. */
 body[data-theme=classic]:not([data-tab=settings]) .sheet{display:none}
-body[data-theme=classic][data-tab=settings] .sheet{position:static;inset:auto;display:flex;flex-direction:column;width:auto;max-width:none;max-height:none;margin:0 16px calc(96px + env(safe-area-inset-bottom));transform:none;visibility:visible;opacity:1;overflow:visible;border-radius:14px;box-shadow:none}
+body[data-theme=classic][data-tab=settings] .sheet{position:static;inset:auto;display:flex;flex-direction:column;width:auto;height:auto;max-width:none;max-height:none;margin:0 16px calc(96px + env(safe-area-inset-bottom));transform:none;visibility:visible;opacity:1;overflow:visible;border-radius:14px;box-shadow:none}
 body[data-theme=classic][data-tab=settings] .sheet .handle{display:none}
 body[data-theme=classic][data-tab=settings] #room-time{order:-1}
 body[data-theme=classic] .scrim{display:none}
@@ -299,6 +299,7 @@ body[data-theme=classic] .nm small{display:block;font:700 9px 'IBM Plex Sans KR'
 body[data-theme=classic] .mixline .slider-label>span[id]{position:absolute;left:108px;top:50%;z-index:1;transform:translateY(-50%);font:700 15px 'Share Tech Mono',monospace;color:var(--lcd-on);text-shadow:0 0 .35em #2ab4ffaa;pointer-events:none}
 body[data-theme=classic] .sheet .mixline .rk{width:38px;height:38px;padding:0;font-size:18px}
 body[data-theme=classic] .mixline input[type=range]{--track:42px;--handle:42px;height:42px;margin:0}
+body[data-theme=classic] .mixline .range-control{height:42px}body[data-theme=classic] .mixline .range-control input[type=range]{inset:0}
 body[data-theme=classic] .mixline input[type=range]::-webkit-slider-runnable-track{border-radius:10px;background:repeating-linear-gradient(90deg,#0000 0 calc(10% - 2px),var(--lcd) calc(10% - 2px) 10%) 52px 50%/calc(100% - 62px) 16px no-repeat,linear-gradient(90deg,var(--cyan) calc(var(--v)*100%),#16224a 0) 52px 50%/calc(100% - 62px) 16px no-repeat,var(--lcd);box-shadow:inset 0 0 0 2px #000,inset 0 0 0 3px #2b3c8e}
 body[data-theme=classic] .mixline input[type=range]::-webkit-slider-thumb{width:2px;background:transparent}
 body[data-theme=classic] .sublbl{margin:14px 0 0;font:700 10px 'IBM Plex Sans KR',sans-serif;color:#8c8ea3;letter-spacing:.14em}
@@ -318,8 +319,8 @@ body[data-theme=classic] .stepper .roll{height:36px;font:28px/36px DSEG7,monospa
 body[data-theme=classic] .stepper #key-note{margin-top:4px;padding:0 7px;border-radius:4px;font:700 10px/17px 'IBM Plex Sans KR',sans-serif;color:#8fb4ff;letter-spacing:.04em}
 body[data-theme=classic] .stepper #key-note.orig{background:#7dff9a1f;color:#7dff9a}
 body[data-theme=classic] .stepper #key-note.orig::before{content:'원키 · '}
-body[data-theme=classic] .sheet .slider-label:has(+#speed),body[data-theme=classic] .sheet .slider-label:has(+#lyric-scale){display:flex;align-items:center;justify-content:space-between;margin-top:16px}
-body[data-theme=classic] .sheet .slider-label:has(+#lyric-scale){margin-top:12px;padding-top:10px;border-top:1px solid #2c2d38}
+body[data-theme=classic] .sheet .slider-label:has(+.range-control){display:flex;align-items:center;justify-content:space-between;margin-top:16px}
+body[data-theme=classic] .sheet #sg-display .slider-label:has(+.range-control){margin-top:12px;padding-top:10px;border-top:1px solid #2c2d38}
 body[data-theme=classic] :is(#speed-value,#lyric-scale-value){padding:4px 10px;border-radius:8px;background:var(--lcd);box-shadow:inset 0 0 0 2px #000,inset 0 0 0 3px #2b3c8e;font:700 15px 'Share Tech Mono',monospace;color:var(--lcd-on)}
 body[data-theme=classic] .sheet .slider-label .nm{font:700 14px 'IBM Plex Sans KR',sans-serif}
 body[data-theme=classic] .sheet .slider-label .nm small{font:500 11px 'IBM Plex Sans KR',sans-serif;letter-spacing:0}
