@@ -173,21 +173,22 @@ function splitLong(){
  const container=$('lyrics'),parts=[],index=[],room=lyricRoom()+1;let split=false;
  container.classList.add('measuring');
  [...container.children].forEach((line,i)=>{
-  const source=lyrics[i],units=source.units,spans=line.children;
+  const source=lyrics[i],units=source.units,spans=line.querySelectorAll('.unit');
   index.push(parts.length);
   if(!source.text){split=true;return;}  // an empty "♪" line only marks a break, which the screen clearing shows
   if(!units||units.length<2||line.scrollWidth<=room||spans.length!==units.length){parts.push(source);return;}
-  const left=[...spans].map(span=>span.offsetLeft),right=[...spans].map(span=>span.offsetLeft+span.offsetWidth);
+  const lineLeft=line.getBoundingClientRect().left,left=[...spans].map(span=>span.getBoundingClientRect().left-lineLeft),right=[...spans].map(span=>span.getBoundingClientRect().right-lineLeft);
   const width=(a,b)=>right[b-1]-left[a];
   const cut=(a,b)=>{
    if(b-a<2||width(a,b)<=room)return [[a,b]];
-   let best=a+1,score=Infinity;
+   let best=a+1,score=Infinity,found=false;
    for(let k=a+1;k<b;k++){
+    if(units[k-1][7]!=null&&units[k-1][7]===units[k][7])continue;
     const w1=width(a,k),w2=width(k,b),text=units[k-1][0];
     const value=Math.abs(w1-w2)/width(a,b)-(/[,，、;；:：!！?？。]\s*$/.test(text)?0.3:0)-(/\s$/.test(text)?0.1:0)+(w1>room||w2>room?1:0);
-    if(value<score){score=value;best=k;}
+    if(value<score){score=value;best=k;found=true;}
    }
-   return [...cut(a,best),...cut(best,b)];
+   return found?[...cut(a,best),...cut(best,b)]:[[a,b]];
   };
   const ranges=cut(0,units.length);if(ranges.length>1)split=true;
   ranges.forEach(([a,b],n)=>{const part=units.slice(a,b);part[part.length-1]=[part.at(-1)[0].trimEnd(),...part.at(-1).slice(1)];parts.push({...source,units:part,text:part.map(unit=>unit[0]).join('').trim(),...n?{t:part[0][1],start:part[0][1],continues:true}:{}});});
@@ -256,7 +257,30 @@ function reserved(){$('cb-dial').hidden=true;showAttractDial('');}
 function placeLyrics(list){
  lyrics=list;firstLine=lyrics.findIndex(line=>line.text);$('lyrics').replaceChildren();
  slots=[];let slot=0;lyrics.forEach((line,i)=>{if(breakAfter(i-1))slot=0;slots[i]=slot;slot^=1;});
- lyrics.forEach((line,i)=>{const p=el('p',line.units?undefined:line.text||'♪','lyric');p.dir='auto';p.dataset.slot=slots[i];for(const [text,,,latin,hangul,jyutping,kana] of line.units||[]){const span=el('span',undefined,latin||hangul||jyutping||kana?'unit ruby':'unit');if(latin||hangul||jyutping||kana){const word=text.trimEnd(),ruby=el('ruby',word),rt=el('rt');rt.append(el('span',latin||'','latin'),el('span',jyutping||'','jyutping'),el('span',hangul||'','hangul'),el('span',kana||'','kana'));ruby.append(rt);span.append(ruby);p.append(span,text.slice(word.length));}else{span.textContent=text;p.append(span);}}$('lyrics').append(p);});$('no-lyrics').hidden=!!lyrics.length;$('lyrics').hidden=!lyrics.length;
+ lyrics.forEach((line,i)=>{
+  const p=el('p',line.units?undefined:line.text||'♪','lyric');p.dir='auto';p.dataset.slot=slots[i];const units=line.units||[];
+  for(let n=0;n<units.length;){
+   const [text,,,latin,hangul,jyutping,kana,group]=units[n];
+   if(group!=null){
+    let end=n+1;while(end<units.length&&units[end][7]===group)end++;
+    const ruby=el('ruby',undefined,'kana-group'),rt=el('rt');let trailing='';
+    for(let j=n;j<end;j++){
+     let base=units[j][0];
+     if(j===end-1){trailing=base.match(/\s+$/u)?.[0]||'';if(trailing)base=base.slice(0,-trailing.length);}
+     ruby.append(el('span',base,'unit'));
+    }
+    rt.append(el('span',units[n][3]||'','latin'),el('span',units[n][5]||'','jyutping'),el('span',units[n][4]||'','hangul'));
+    const kanaReading=el('span',units[n][6]||'','kana');
+    kanaReading.dataset.from=units[n][1];kanaReading.dataset.to=units[end-1][2];
+    rt.append(kanaReading);
+    ruby.append(rt);p.append(ruby,trailing);n=end;continue;
+   }
+   const span=el('span',undefined,latin||hangul||jyutping||kana?'unit ruby':'unit');
+   if(latin||hangul||jyutping||kana){const word=text.trimEnd(),ruby=el('ruby',word),rt=el('rt');rt.append(el('span',latin||'','latin'),el('span',jyutping||'','jyutping'),el('span',hangul||'','hangul'),el('span',kana||'','kana'));ruby.append(rt);span.append(ruby);p.append(span,text.slice(word.length));}else{span.textContent=text;p.append(span);}
+   n++;
+  }
+  $('lyrics').append(p);
+ });$('no-lyrics').hidden=!!lyrics.length;$('lyrics').hidden=!lyrics.length;
 }
 // Stems are stored scaled down to fit FLAC; the gain restores their original level.
 // Speed changes tempo only (the browser keeps pitch); the key shift is applied by the worklet.
@@ -368,8 +392,12 @@ function frame(now){
    counting=dotted;
    // KTV wipe: each character/word fills left to right over its sung interval.
    for(const n of echoing?[leadLine,index]:[index]){
-    const units=lines[n]?.units,spans=$('lyrics').children[n]?.children;
+    const units=lines[n]?.units,line=$('lyrics').children[n],spans=line?.querySelectorAll('.unit');
     if(units&&spans)units.forEach(([,from,to],i)=>spans[i]?.style.setProperty('--p',Math.max(0,Math.min(1,(time-from)/Math.max(.05,to-from)))));
+    line?.querySelectorAll('ruby.kana-group .kana').forEach(reading=>{
+     const from=Number(reading.dataset.from),to=Number(reading.dataset.to);
+     reading.style.setProperty('--p',Math.max(0,Math.min(1,(time-from)/Math.max(.05,to-from))));
+    });
    }
    $('elapsed').textContent=clock(music.currentTime);$('progress').parentElement.style.setProperty('--p',Math.min(1,music.currentTime/(state.current.duration||1)));
    if(classic()&&state.current.music_end&&!music.paused&&music.currentTime>=state.current.music_end)finish();

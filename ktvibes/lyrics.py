@@ -227,32 +227,36 @@ def add_romaji(lines: list[dict]) -> list[dict]:
                 unit[3:] = [reading]
     return lines
 
-def kana(units: list[str]) -> list[str]:
-    """Return hiragana readings per lyric unit, using pykakasi for kanji word readings."""
+def kana_with_groups(units: list[str]) -> list[tuple[str, int | None]]:
+    """Return readings and shared ruby-group IDs for Japanese word segments."""
     global _kakasi
     if _kakasi is None:
         import pykakasi
         _kakasi = pykakasi.kakasi()
     text = "".join(units)
     owner = [i for i, unit in enumerate(units) for _ in unit]
-    out, position = [""] * len(units), 0
-    small = str.maketrans("ァィゥェォャュョヮッ", "ぁぃぅぇぉゃゅょゎっ")
+    starts, total = [], 0
+    for unit in units:
+        starts.append(total)
+        total += len(unit)
+    out, groups, position = [""] * len(units), [None] * len(units), 0
     for segment in _kakasi.convert(text):
         word, reading = segment["orig"], segment.get("hira", "")
         if HAN.search(word) and reading.strip() and position < len(owner):
-            out[owner[position]] += reading
-        elif KANA_CHARS.search(word):
-            chars = list(word)
-            for k, char in enumerate(chars):
-                if char in SMALL_KANA and k:
-                    if position + k - 1 < len(owner):
-                        out[owner[position + k - 1]] += char.translate(small)
-                    continue
-                hira = _kakasi.convert(char)[0].get("hira", char)
-                if position + k < len(owner):
-                    out[owner[position + k]] += hira
+            first, last = owner[position], owner[min(position + len(word) - 1, len(owner) - 1)]
+            # A ruby group must start/end on timing-unit boundaries. Trailing spaces belong to
+            # the preceding CJK unit, so allow whitespace after the segment's final character.
+            exact_edges = position == starts[first] and text[position:starts[last] + len(units[last])].rstrip() == word
+            if exact_edges:
+                for index in range(first, last + 1):
+                    groups[index] = position
+                out[first] += reading
         position += len(word)
-    return [value.strip() for value in out]
+    return [(value.strip(), group) for value, group in zip(out, groups)]
+
+def kana(units: list[str]) -> list[str]:
+    """Return hiragana readings for kanji word segments only."""
+    return [reading for reading, _ in kana_with_groups(units)]
 
 def add_kana(lines: list[dict]) -> list[dict]:
     """Append hiragana readings to Japanese lyric units in the kana guide slot."""
@@ -262,10 +266,11 @@ def add_kana(lines: list[dict]) -> list[dict]:
         units = line.get("units")
         if not units:
             continue
-        for unit, reading in zip(units, kana([u[0] for u in units])):
-            while len(unit) < 7:
+        for unit, (reading, group) in zip(units, kana_with_groups([u[0] for u in units])):
+            while len(unit) < 8:
                 unit.append("")
             unit[6] = reading
+            unit[7] = group
     return lines
 
 # Characters that appear in written Cantonese but hardly ever in Mandarin lyrics.

@@ -70,7 +70,8 @@ def timed_lyrics(folder: Path, raw: str, samples_path: Path, lines: list[dict]) 
         cached = json.loads((folder / "timed.json").read_text(encoding="utf-8"))
         # Energy-only timing (the aligner failed) is retried once per run, not on every play.
         if cached.get("key") == key and (cached.get("aligned", True) or (folder / "timed.json").stat().st_mtime >= STARTED):
-            return cached["lines"]
+            # Refresh Japanese ruby grouping on old timing entries without rerunning alignment.
+            return lyrics.add_kana(cached["lines"])
     except (OSError, ValueError, KeyError):
         pass
     samples, rate = sf.read(samples_path, dtype="float32")

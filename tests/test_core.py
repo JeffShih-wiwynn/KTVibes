@@ -701,7 +701,23 @@ class LyricsMatchTests(unittest.TestCase):
         lines = [{'t': 0, 'text': '世界', 'units': units}, {'t': 1, 'text': 'ありがとう', 'units': [[c, 1, 2] for c in 'ありがとう']}]
         lines = lyrics.add_kana(lyrics.add_jyutping(guides.add_hangul(lyrics.add_korean_romanization(lyrics.add_pinyin(lyrics.add_romaji(lines))))))
         self.assertEqual([unit[6] for unit in units], ['せかい', ''])
-        self.assertEqual(lyrics.kana(['き', 'ゃ', 'っ', 'と']), ['きゃ', '', 'っ', 'と'])
+        self.assertEqual(lyrics.kana(['き', 'ゃ', 'っ', 'と']), ['', '', '', ''])
+
+    def test_kana_word_reading_is_shared_by_its_timed_units(self):
+        from ktvibes import lyrics
+
+        class Kakasi:
+            def convert(self, text):
+                if text == '思い出が':
+                    return [{'orig': '思い出', 'hira': 'おもいで'}, {'orig': 'が', 'hira': 'が'}]
+                return [{'orig': text, 'hira': text}]
+
+        units = [[char, index, index + 1] for index, char in enumerate('思い出が')]
+        lines = [{'t': 0, 'text': '思い出が', 'units': units}]
+        with unittest.mock.patch.object(lyrics, '_kakasi', Kakasi()):
+            lyrics.add_kana(lines)
+        self.assertEqual([unit[6] for unit in units], ['おもいで', '', '', ''])
+        self.assertEqual([unit[7] for unit in units], [0, 0, 0, None])
 
     def test_original_script_beats_romanized_record(self):
         from ktvibes import lyrics
