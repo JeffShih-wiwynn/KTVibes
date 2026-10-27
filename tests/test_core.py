@@ -62,7 +62,22 @@ class LyricsTests(unittest.TestCase):
             result = asyncio.run(lyrics.plain_record('周杰倫', '晴天', 270))
         self.assertEqual(result, {'id': 2, 'text': 'second'})
 
-    def test_mixed_search_returns_one_record_with_both_formats_and_filters_plain_mismatch(self):
+    def test_automatic_plain_lookup_still_rejects_parse_mismatch(self):
+        import asyncio
+        from unittest.mock import patch
+        from ktvibes import lyrics
+        class Response:
+            def json(self): return [{'id': 8, 'artistName': 'SEKAI NO OWARI', 'trackName': 'Stella', 'plainLyrics': '歌詞'}]
+            def raise_for_status(self): pass
+        class Client:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def get(self, *args, **kwargs): return Response()
+        with patch.object(lyrics, 'lrclib', return_value=Client()):
+            result = asyncio.run(lyrics.plain_record('SEKAI NO OWARI', 'misparsed promotional title', None))
+        self.assertIsNone(result)
+
+    def test_mixed_search_returns_one_record_with_both_formats_and_manual_plain_mismatch(self):
         import asyncio
         from unittest.mock import patch
         from ktvibes import lyrics
@@ -83,8 +98,9 @@ class LyricsTests(unittest.TestCase):
             async def get(self, *args, **kwargs): return Response()
         with patch.object(lyrics, 'lrclib', return_value=Client()):
             result = asyncio.run(lyrics.mixed_search('晴天', '周杰倫', '晴天', None))
-        self.assertEqual([record['id'] for record in result], [4, 5])
+        self.assertEqual([record['id'] for record in result], [4, 5, 6])
         self.assertEqual((bool(result[0].get('syncedLyrics')), result[0]['plainLyrics']), (True, '天青色等煙雨'))
+        self.assertIsNone(lyrics.plain_match_score(records[2], '周杰倫', '晴天', None))
 
     def test_title_metadata_preserves_original_script(self):
         self.assertEqual(parse_title('周杰倫 - 晴天 (Official MV)'), {'artist': '周杰倫', 'title': '晴天'})

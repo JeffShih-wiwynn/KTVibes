@@ -134,14 +134,14 @@ p{margin:0}a{color:var(--ink);text-decoration:none}
 .row .num:focus-visible{outline:2px solid var(--lime);outline-offset:2px;border-radius:5px}
 .thumb{position:relative;width:52px;height:52px;flex:none}
 .thumb .art{width:44px;height:44px;margin:4px;border-radius:12px}
-/* Preparation progress rings the thumbnail, then flashes lime and fades once the song is ready. */
-.ring{position:absolute;inset:0;width:52px;height:52px;transform:rotate(-90deg)}
-.ring circle{fill:none;stroke-width:3;stroke-linecap:round}
+/* Preparation outlines the thumbnail, then flashes lime and fades once the song is ready. */
+.ring{position:absolute;inset:0;z-index:1;width:52px;height:52px;pointer-events:none}
+.ring path{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
 .ring .track{stroke:#ffffff1a}.ring .fill{stroke:var(--amber);stroke-dasharray:var(--c);stroke-dashoffset:calc(var(--c)*(1 - var(--p,0)));transition:stroke-dashoffset .5s var(--emph),stroke .3s}
-.ring.busy .fill{stroke-dashoffset:calc(var(--c)*.75);animation:spin 1s linear infinite;transform-origin:26px 26px}
-@keyframes spin{to{transform:rotate(360deg)}}
+.ring.busy .fill{stroke-dasharray:var(--segment) var(--gap);stroke-dashoffset:0;animation:ring-trace 1.3s linear infinite}
+@keyframes ring-trace{to{stroke-dashoffset:var(--travel)}}
 .row.ready .ring{animation:ring-done .7s var(--emph) forwards}.row.ready .ring .fill{stroke:var(--lime)}
-@keyframes ring-done{30%{opacity:1;transform:rotate(-90deg) scale(1.12)}to{opacity:0;transform:rotate(-90deg) scale(1.25)}}
+@keyframes ring-done{30%{opacity:1;transform:scale(1.08)}to{opacity:0;transform:scale(1.2)}}
 .row .info{flex:1;min-width:0}
 .row h3{font-size:15px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row p{margin-top:2px;font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -236,10 +236,6 @@ input[type=range]:disabled{opacity:.4;cursor:default}
 .seg.ready .pill{transition:transform .45s var(--spring),width .45s var(--spring)}
 .seg button{position:relative;z-index:1;height:36px;padding:0 13px;color:var(--muted);font-size:13px;font-weight:500;transition:color .25s}
 .seg button[aria-pressed=true]{color:var(--on-lime);font-weight:700}
-.lyric-timing{display:flex;align-items:center;gap:8px;margin:12px 14px 0;font-size:13px}
-.lyric-timing .timing-label{flex:1;color:var(--muted)}
-.lyric-timing b{font-variant-numeric:tabular-nums;color:var(--ink)}
-.lyric-timing button{height:34px;padding:0 10px;border-radius:17px;font-size:12px}
 .lyric-preview{max-height:28vh;overflow:auto;margin:10px 14px 0;padding:10px 12px;border-radius:10px;background:#ffffff08;border:1px solid #ffffff16}
 .lyric-preview:empty{display:none}
 .lyric-preview p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
@@ -267,12 +263,16 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 .seg[data-action=guide] button{padding:0 9px}
 .lyric-view-status,.lyric-choose-status{flex:none;margin:0 0 8px;color:var(--muted);font-size:12px}.lyric-reader{min-height:120px;flex:1;overflow:auto;margin:0;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);white-space:pre-wrap;overflow-wrap:anywhere;font:400 17px/1.8 system-ui,sans-serif;overscroll-behavior:contain}
 .lyric-choose-pane{flex:1}.lyric-choose-pane .lyric-options{min-height:0;flex:1}.lyric-choose-pane .lyric-preview{display:none}
-.lyric-search{display:flex;gap:8px;margin-bottom:12px}
+.lyric-search{display:flex;flex:none;gap:8px;margin-bottom:12px}
 .lyric-search input{flex:1;min-width:0;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:#121513;font-size:16px}
 .lyric-search button{padding:0 16px;border-radius:20px;background:var(--lime);color:var(--on-lime);font-weight:700}
+.lyric-search-terms{display:flex;flex:none;flex-wrap:wrap;align-content:flex-start;gap:6px;margin:0 0 10px}
+.lyric-search-terms[hidden]{display:none}
+.lyric-search-term{min-height:38px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);color:var(--muted);font-size:12px;line-height:1.3}
+.lyric-search-term.active{border-color:var(--lime);color:var(--ink);background:#d5ff6a18}
 .lyric-options{overflow-y:auto;display:grid;gap:8px}
 .lyric-options .muted,.lyric-options .error{font-size:13px}.lyric-options .error{color:var(--red)}
-.lyric-option{display:grid;gap:4px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);text-align:left}
+.lyric-option{display:grid;gap:9px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);text-align:left}
 .lyric-option div{display:flex;align-items:baseline;gap:8px;min-width:0}
 .lyric-option b{color:var(--lime);font-size:14px;flex:none}
 .lyric-option span{flex:1;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -282,11 +282,13 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 .lyric-option.current{border-color:var(--lime)}.lyric-option.busy{opacity:.6}
 .lyric-card-head{flex-wrap:wrap}.lyric-card-head span{flex-basis:100%}
 .lyric-formats,.lyric-card-actions{display:flex;flex-wrap:wrap;gap:6px}
-.lyric-format{flex:none!important;padding:3px 7px;border:1px solid var(--line);border-radius:999px;font-size:10px!important;white-space:normal!important}
-.lyric-format.selected{border-color:var(--lime);color:var(--lime)}
-.lyric-card-previews{display:grid;gap:6px}.lyric-card-preview{display:grid;gap:3px;min-width:0}.lyric-card-preview small{white-space:pre-wrap;overflow-wrap:anywhere}
-.lyric-card-preview .lyric-preview-label{color:var(--lime);font-weight:700;white-space:normal}
-.lyric-card-actions button{min-height:34px;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font-size:12px;font-weight:700}
+.lyric-format{flex:none!important;padding:3px 7px;border:1px solid var(--line);border-radius:999px;color:var(--muted)!important;font-size:10px!important;white-space:normal!important}
+.lyric-option .lyric-card-preview{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;align-items:stretch;min-width:0}
+.lyric-option .lyric-format-preview{display:grid;gap:4px;min-width:0}
+.lyric-option .lyric-format-preview>span{font-size:10px;color:var(--muted)}
+.lyric-card-preview small{font-size:14px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.lyric-card-actions{justify-content:flex-end;margin-top:3px}
+.lyric-card-actions button{min-height:40px;padding:7px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font-size:13px;font-weight:700}
 .lyric-card-actions button:disabled{opacity:.5}
 .lyric-all{padding:12px;color:var(--muted);font-size:13px}
 @keyframes sheet-in{from{transform:translateY(100%)}}@keyframes sheet-out{to{transform:translateY(100%)}}

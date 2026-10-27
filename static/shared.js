@@ -27,7 +27,7 @@ export const clock = seconds => `${Math.floor((seconds||0)/60)}:${String(Math.fl
 // Sliders fire many input events; send at most one every `ms`, always ending on the final value.
 export function throttle(fn, ms=120){let last=0,timer;return value=>{clearTimeout(timer);const wait=last+ms-Date.now();if(wait<=0){last=Date.now();fn(value);}else timer=setTimeout(()=>{last=Date.now();fn(value);},wait);};}
 // Preparation status, as both screens describe it.
-const STEPS={queued:'Waiting to download',downloading:'Downloading',separating:'Separating vocals',syncing:'Finding lyrics',ready:'Ready',error:'Failed'};
+const STEPS={queued:'Waiting',downloading:'Downloading',separating:'Separating vocals',searching_synced_lyrics:'Searching synced lyrics',aligning_lyrics:'Aligning lyrics',ready:'Ready',error:'Failed'};
 export function prepLabel(item){const percent=item.progress?Math.round(item.progress*100):null;return {percent,text:`${STEPS[item.status]||item.status}${item.step?` ${item.step}`:''}${percent==null?'':` · ${percent}%`}`};}
 // Sliders paint their own filled track from --v (0–1); call after setting a value in code.
 export function syncRanges(){for(const range of document.querySelectorAll('input[type=range]'))range.style.setProperty('--v',(range.value-range.min)/((range.max-range.min)||1));}

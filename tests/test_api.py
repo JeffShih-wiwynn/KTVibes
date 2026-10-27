@@ -78,20 +78,25 @@ class APITests(unittest.TestCase):
                                                        'lyrics_record_id': 11}), encoding='utf-8')
         (folder / 'plain_lyrics.json').write_text(json.dumps({'identity': ['周杰倫', '晴天'], 'record_id': 22,
             'status': 'ready', 'checked_at': 1, 'text': '天青色等煙雨', 'origin': 'manual'}, ensure_ascii=False), encoding='utf-8')
+        (folder / 'viewer_selection.json').write_text(json.dumps({'identity': ['周杰倫', '晴天'], 'format': 'plain',
+            'record_id': 22, 'origin': 'manual'}, ensure_ascii=False), encoding='utf-8')
         records = [{'id': 11, 'trackName': '晴天', 'artistName': '周杰倫', 'duration': 270,
                     'syncedLyrics': raw, 'plainLyrics': '天青色等煙雨'},
-                   {'id': 22, 'trackName': '晴天', 'artistName': '周杰倫', 'plainLyrics': '天青色等煙雨'}]
+                   {'id': 22, 'trackName': '晴天', 'artistName': '周杰倫', 'plainLyrics': '天青色等煙雨'},
+                   {'id': 23, 'trackName': 'Stella', 'artistName': 'Other Artist', 'plainLyrics': '天幕の歌詞'}]
         async def search(*args): return records
         with patch.object(self.main.lyrics, 'mixed_search', search):
             response = self.client.get(f"/api/lyrics/choices/{item['key']}", params={'q': '晴天'})
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertTrue(payload['synced_active'])
-        self.assertEqual([entry['id'] for entry in payload['results']], [11, 22])
-        self.assertEqual(sum(entry['formats']['synced']['current'] for entry in payload['results']), 1)
+        self.assertFalse(payload['synced_active'])
+        self.assertEqual(payload['selection_format'], 'plain')
+        self.assertEqual([entry['id'] for entry in payload['results']], [11, 22, 23])
+        self.assertEqual(sum(entry['formats']['synced']['current'] for entry in payload['results']), 0)
         self.assertTrue(payload['results'][0]['formats']['plain']['available'])
         self.assertTrue(payload['results'][1]['formats']['plain']['selected'])
-        self.assertFalse(payload['results'][1]['formats']['plain']['active'])
+        self.assertTrue(payload['results'][1]['formats']['plain']['active'])
+        self.assertTrue(payload['results'][2]['formats']['plain']['available'])
 
     def test_plain_selection_is_viewer_only_allowed_while_processing_and_keeps_synced_cache(self):
         import json
@@ -108,13 +113,41 @@ class APITests(unittest.TestCase):
         with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value=record):
             response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 9})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual((response.json()['source'], response.json()['active']), ('synced', False))
-        self.assertEqual(item['viewer_lyrics_source'], 'synced')
+        self.assertEqual((response.json()['source'], response.json()['active']), ('plain', True))
+        self.assertEqual(item['viewer_lyrics_source'], 'plain')
         cache = json.loads((folder / 'plain_lyrics.json').read_text(encoding='utf-8'))
         self.assertEqual((cache['record_id'], cache['text'], cache['origin']), (9, record['plainLyrics'], 'manual'))
+        selection = json.loads((folder / 'viewer_selection.json').read_text(encoding='utf-8'))
+        self.assertEqual((selection['format'], selection['record_id'], selection['origin']), ('plain', 9, 'manual'))
+        view = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+        self.assertEqual((view['source'], view['text']), ('plain', record['plainLyrics']))
         self.assertEqual(json.loads(meta_path.read_text(encoding='utf-8')), metadata)
         self.assertEqual(lrc_path.read_text(encoding='utf-8'), raw)
         self.assertFalse((folder / 'timed.json').exists())
+
+    def test_manual_synced_selection_replaces_plain_viewer_preference(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        item.update(status='ready', lyrics_status='ready')
+        self.main.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        raw = '[00:01.00]Synced is selected'
+        (folder / 'lyrics.lrc').write_text(raw, encoding='utf-8')
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'Artist', 'title': 'Song', 'duration': 120,
+            'lyrics_record_id': 3, 'lyrics_identity': ['Artist', 'Song'], 'lyrics_source': 'manual'}), encoding='utf-8')
+        plain = {'id': 8, 'artistName': 'Artist', 'trackName': 'Song', 'plainLyrics': 'Plain was selected first'}
+        synced = {'id': 3, 'artistName': 'Artist', 'trackName': 'Song', 'syncedLyrics': raw}
+        with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value=plain):
+            self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 8})
+        with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value=synced):
+            response = self.client.post(f"/api/queue/{item['key']}/lyrics", json={'id': 3})
+        self.assertEqual(response.status_code, 200)
+        view = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+        self.assertEqual((view['source'], view['text']), ('synced', 'Synced is selected'))
+        selection = json.loads((folder / 'viewer_selection.json').read_text(encoding='utf-8'))
+        self.assertEqual((selection['format'], selection['record_id']), ('synced', 3))
+        self.assertTrue((folder / 'plain_lyrics.json').is_file())
 
     def test_plain_selection_is_shown_when_no_synced_cache_and_rejects_stale_target(self):
         from ktvibes.queue import State
@@ -131,14 +164,27 @@ class APITests(unittest.TestCase):
         self.main.state.upcoming.remove(item)
         self.assertEqual(self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 10}).status_code, 404)
 
-    def test_plain_selection_rejects_unrelated_lrclib_record(self):
+    def test_manual_plain_selection_accepts_record_when_auto_parsed_identity_is_wrong(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'SEKAI NO OWARI', 'misparsed promotional title')
+        self.main.state.upcoming.append(item)
+        with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value={
+            'id': 12, 'artistName': 'Other Artist', 'trackName': 'Stella', 'plainLyrics': '星の歌詞'}):
+            response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 12})
+        self.assertEqual((response.status_code, response.json()['source'], response.json()['text']), (200, 'plain', '星の歌詞'))
+        cache = json.loads((Path(self.temp.name) / item['id'] / 'plain_lyrics.json').read_text(encoding='utf-8'))
+        self.assertEqual((cache['record_id'], cache['origin']), (12, 'manual'))
+
+    def test_manual_plain_selection_still_rejects_missing_or_oversized_text(self):
         from ktvibes.queue import State
         item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
         self.main.state.upcoming.append(item)
-        with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value={
-            'id': 12, 'artistName': 'Other', 'trackName': 'Different', 'plainLyrics': 'wrong'}):
-            response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': 12})
-        self.assertEqual(response.status_code, 422)
+        for record in ({'id': 13, 'artistName': 'Artist', 'trackName': 'Song'},
+                       {'id': 14, 'plainLyrics': '歌' * 100_001}):
+            with patch.object(self.main.lyrics, 'record', new_callable=AsyncMock, return_value=record):
+                response = self.client.post(f"/api/lyrics/plain/{item['key']}", json={'id': record['id']})
+            self.assertEqual(response.status_code, 422)
         self.assertFalse((Path(self.temp.name) / item['id'] / 'plain_lyrics.json').exists())
 
     def test_manual_plain_cache_is_reused_without_automatic_lookup(self):

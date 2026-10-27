@@ -34,6 +34,19 @@ def read_plain_cache(path, identity: list[str], now: float | None = None) -> dic
             pass
     return None
 
+def read_viewer_selection(path, identity: list[str]) -> dict | None:
+    """Return an explicit, identity-matched manual format choice for the mobile viewer."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (not isinstance(value, dict) or value.get("identity") != identity or
+            value.get("origin") != "manual" or value.get("format") not in ("synced", "plain")):
+        return None
+    if not isinstance(value.get("record_id"), int) or isinstance(value.get("record_id"), bool):
+        return None
+    return value
+
 def split_units(text: str) -> list[str]:
     return UNIT.findall(text)
 
@@ -95,10 +108,23 @@ def plain_identity(value: str) -> str:
     folded = unicodedata.normalize("NFKC", str(value or "")).casefold()
     return "".join(ch for ch in folded if ch.isalnum())
 
+def valid_plain_text(candidate: dict) -> str | None:
+    """Return usable plain lyrics for a manually selected LRCLIB record."""
+    if not isinstance(candidate, dict):
+        return None
+    text = candidate.get("plainLyrics")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        if len(text.encode("utf-8")) > 200_000:
+            return None
+    except UnicodeEncodeError:
+        return None
+    return text.strip()
+
 def plain_match_score(candidate: dict, artist: str, title: str, duration: float | None) -> tuple | None:
     """Return a deterministic relevance score, or reject a plain-lyrics record."""
-    text = candidate.get("plainLyrics")
-    if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > 200_000:
+    if valid_plain_text(candidate) is None:
         return None
     wanted_titles = [plain_identity(v) for v in variants(title)]
     wanted_artists = [plain_identity(v) for v in variants(artist)]
@@ -594,7 +620,7 @@ async def search(query: str, duration: float) -> list[dict]:
     return sorted(synced, key=lambda c: abs(float(c.get("duration") or 0) - duration))[:20]
 
 async def mixed_search(query: str, artist: str, title: str, duration: float | None) -> list[dict]:
-    """One LRCLIB record per result, with either usable synced or relevant plain lyrics (or both)."""
+    """One LRCLIB record per result; manual queries may surface plain records despite bad auto metadata."""
     async with lrclib() as client:
         response = await client.get("/api/search", params={"q": query})
         response.raise_for_status()
@@ -603,7 +629,8 @@ async def mixed_search(query: str, artist: str, title: str, duration: float | No
     for candidate in records:
         synced = isinstance(candidate.get("syncedLyrics"), str) and bool(STAMP.search(candidate["syncedLyrics"]))
         plain_score = plain_match_score(candidate, artist, title, duration)
-        if not synced and plain_score is None:
+        plain_available = valid_plain_text(candidate) is not None
+        if not synced and not plain_available:
             continue
         key = candidate.get("id") or (candidate.get("artistName"), candidate.get("trackName"), candidate.get("albumName"))
         if key not in unique:
