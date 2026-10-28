@@ -98,6 +98,34 @@ class APITests(unittest.TestCase):
         self.assertTrue(payload['results'][1]['formats']['plain']['active'])
         self.assertTrue(payload['results'][2]['formats']['plain']['available'])
 
+    def test_lyrics_search_503_returns_a_clear_wait_and_retry_message(self):
+        from types import SimpleNamespace
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        self.main.state.upcoming.append(item)
+        error = RuntimeError('upstream unavailable')
+        error.response = SimpleNamespace(status_code=503)
+        async def fail(*args): raise error
+        with patch.object(self.main.lyrics, 'mixed_search', fail):
+            response = self.client.get(f"/api/lyrics/choices/{item['key']}", params={'q': 'Song'})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()['detail'], 'LRCLIB is temporarily busy. Please wait 1 second, then try again.')
+        self.assertEqual(response.headers['retry-after'], '1')
+
+    def test_lyrics_search_429_uses_upstream_retry_after(self):
+        from types import SimpleNamespace
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        self.main.state.upcoming.append(item)
+        error = RuntimeError('too many requests')
+        error.response = SimpleNamespace(status_code=429, headers={'Retry-After': '3'})
+        async def fail(*args): raise error
+        with patch.object(self.main.lyrics, 'mixed_search', fail):
+            response = self.client.get(f"/api/lyrics/choices/{item['key']}", params={'q': 'Song'})
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers['retry-after'], '3')
+        self.assertEqual(response.json()['detail'], 'LRCLIB is limiting lyric searches. Please wait 3 seconds, then try again.')
+
     def test_plain_selection_is_viewer_only_allowed_while_processing_and_keeps_synced_cache(self):
         import json
         from ktvibes.queue import State
@@ -250,6 +278,26 @@ class APITests(unittest.TestCase):
         self.assertEqual(item['viewer_lyrics_source'], 'synced')
         self.assertEqual(json.loads(meta_path.read_text(encoding='utf-8')), original)
         self.assertFalse((folder / 'plain_lyrics.json').exists())
+
+    def test_marking_lyrics_unavailable_overrides_synced_match_and_persists(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', '周杰倫', '晴天')
+        item.update(status='ready', lyrics_status='ready', lyrics=[{'t': 2, 'text': 'Wrong lyrics'}])
+        self.main.state.current = item
+        folder = Path(self.temp.name) / item['id']; folder.mkdir()
+        (folder / 'lyrics.lrc').write_text('[00:02.00]Wrong lyrics', encoding='utf-8')
+        (folder / 'meta.json').write_text(json.dumps({'artist': '周杰倫', 'title': '晴天', 'duration': 270,
+            'lyrics_identity': ['周杰倫', '晴天']}), encoding='utf-8')
+
+        response = self.client.post(f"/api/lyrics/unavailable/{item['key']}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((item['lyrics'], item['lyrics_status'], item['viewer_lyrics_source'], item['lyrics_rev']), ([], 'missing', 'missing', 1))
+        selection = json.loads((folder / 'viewer_selection.json').read_text(encoding='utf-8'))
+        self.assertEqual((selection['format'], selection['record_id'], selection['origin']), ('none', None, 'manual'))
+        view = self.client.get(f"/api/lyrics/view/{item['key']}").json()
+        self.assertEqual(view['status'], 'missing')
 
     def test_lyrics_view_caches_plain_text_utf8_and_reuses_it(self):
         import json

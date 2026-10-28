@@ -190,7 +190,12 @@ async def run(state, cache: Path):
             else:
                 item["status"] = "searching_synced_lyrics"
             item["step"], item["progress"] = None, None
-            if (same or manual) and lyrics.parse_lrc(cached):
+            if viewer_selection and viewer_selection["format"] == "none":
+                item["lyrics"] = []
+                item["lyrics_status"] = "missing"
+                item["viewer_lyrics_source"] = "missing"
+                raw = ""
+            elif (same or manual) and lyrics.parse_lrc(cached):
                 item["viewer_lyrics_source"] = "synced"
             elif plain_cache and plain_cache.get("status") == "ready":
                 item["viewer_lyrics_source"] = "plain"
@@ -203,7 +208,9 @@ async def run(state, cache: Path):
             elif viewer_selection:
                 item["viewer_lyrics_source"] = "missing"
             await state.broadcast()
-            if (same or manual) and lyrics.parse_lrc(cached):
+            if viewer_selection and viewer_selection["format"] == "none":
+                item["status"] = "ready"
+            elif (same or manual) and lyrics.parse_lrc(cached):
                 raw = cached
                 item["lyrics"] = lyrics.parse_lrc(cached)
                 item["lyrics_status"] = "ready"
@@ -285,7 +292,11 @@ async def run(state, cache: Path):
                 plain_cache = lyrics.read_plain_cache(
                     folder / "plain_lyrics.json",
                     [lyrics.plain_identity(identity[0]), lyrics.plain_identity(identity[1])], time.time())
-                if identity_matches and lyrics.STAMP.search(latest_raw) and lyrics.lrc_display_text(latest_raw).strip():
+                if viewer_selection and viewer_selection["format"] == "none":
+                    item["lyrics"] = []
+                    item["lyrics_status"] = "missing"
+                    item["viewer_lyrics_source"] = "missing"
+                elif identity_matches and lyrics.STAMP.search(latest_raw) and lyrics.lrc_display_text(latest_raw).strip():
                     item["viewer_lyrics_source"] = "synced"
                 else:
                     if plain_cache and plain_cache.get("status") == "ready":

@@ -40,7 +40,7 @@ def _plain_cache_write(path: Path, value: dict) -> None:
         with suppress(OSError):
             temporary.unlink()
 
-def _save_viewer_selection(folder: Path, identity: list[str], fmt: str, record_id: int) -> None:
+def _save_viewer_selection(folder: Path, identity: list[str], fmt: str, record_id: int | None) -> None:
     _plain_cache_write(folder / "viewer_selection.json", {
         "identity": identity, "format": fmt, "record_id": record_id, "origin": "manual"})
 
@@ -150,6 +150,9 @@ async def lyrics_view(target_key: str):
         if selection and selection["format"] == "plain" and cached and cached.get("status") == "ready" and cached.get("record_id") == selection["record_id"]:
             _publish_viewer_lyrics_source(target, "plain")
             return _viewer_result(target, "ready", "plain", cached["text"], cached.get("record_id"))
+        if selection and selection["format"] == "none":
+            _publish_viewer_lyrics_source(target, "missing")
+            return _viewer_result(target, "missing")
         if selection and selection["format"] == "synced" and raw:
             _publish_viewer_lyrics_source(target, "synced")
             return _viewer_result(target, "ready", "synced", lyrics.lrc_display_text(raw), selection["record_id"])
@@ -201,6 +204,9 @@ async def lyrics_view(target_key: str):
         if selection and selection["format"] == "plain" and cached and cached.get("status") == "ready" and cached.get("record_id") == selection["record_id"]:
             _publish_viewer_lyrics_source(current_target, "plain")
             return _viewer_result(current_target, "ready", "plain", cached["text"], cached.get("record_id"))
+        if selection and selection["format"] == "none":
+            _publish_viewer_lyrics_source(current_target, "missing")
+            return _viewer_result(current_target, "missing")
         if selection and selection["format"] == "synced" and raw:
             _publish_viewer_lyrics_source(current_target, "synced")
             return _viewer_result(current_target, "ready", "synced", lyrics.lrc_display_text(raw), selection["record_id"])
@@ -360,6 +366,19 @@ async def lyric_choices(target_key: str, q: str = Query(min_length=1, max_length
     try:
         found = await lyrics.mixed_search(q.strip(), target.get("artist", ""), target.get("title", ""), duration)
     except Exception as exc:
+        upstream = getattr(exc, "response", None)
+        status = getattr(upstream, "status_code", None)
+        if status == 503:
+            raise HTTPException(503, "LRCLIB is temporarily busy. Please wait 1 second, then try again.",
+                                headers={"Retry-After": "1"}) from exc
+        if status == 429:
+            retry_after = getattr(upstream, "headers", {}).get("Retry-After", "")
+            try:
+                retry_after = str(max(1, min(60, int(float(retry_after)))))
+            except (TypeError, ValueError):
+                retry_after = "5"
+            raise HTTPException(429, f"LRCLIB is limiting lyric searches. Please wait {retry_after} seconds, then try again.",
+                                headers={"Retry-After": retry_after}) from exc
         raise HTTPException(502, f"Lyrics lookup failed: {exc}") from exc
     results = []
     legacy_matched = False
@@ -369,7 +388,7 @@ async def lyric_choices(target_key: str, q: str = Query(min_length=1, max_length
         synced_lines = [line["text"] for line in lyrics.parse_lrc(raw) if line.get("text")] if synced_available else []
         if selection and selection["format"] == "synced":
             synced_current = synced_available and candidate.get("id") == selection["record_id"]
-        elif selection and selection["format"] == "plain":
+        elif selection and selection["format"] in ("plain", "none"):
             synced_current = False
         elif has_saved_id:
             synced_current = synced_available and candidate.get("id") == saved_id
@@ -398,7 +417,7 @@ async def lyric_choices(target_key: str, q: str = Query(min_length=1, max_length
             }
         })
     return {"key": target_key, "id": video_id,
-            "synced_active": bool(synced_raw) and not (selection and selection["format"] == "plain"),
+            "synced_active": bool(synced_raw) and not (selection and selection["format"] in ("plain", "none")),
             "selection_format": selection.get("format") if selection else None,
             "plain_record_id": plain.get("record_id") if plain and plain.get("status") == "ready" else None,
             "plain_origin": plain.get("origin") if plain and plain.get("status") == "ready" else None,
@@ -406,6 +425,27 @@ async def lyric_choices(target_key: str, q: str = Query(min_length=1, max_length
 
 class LyricChoice(BaseModel):
     id: int
+
+@app.post("/api/lyrics/unavailable/{target_key}")
+async def mark_lyrics_unavailable(target_key: str):
+    """Remember that no currently suitable lyrics should be shown for this song."""
+    target = _viewer_target(target_key)
+    video_id = target["id"]
+    identity = _plain_identity(target.get("artist", ""), target.get("title", ""))
+    folder = CACHE / video_id
+    _plain_selection_seq[target_key] = _plain_selection_seq.get(target_key, 0) + 1
+    async with state.cache_lock(video_id):
+        target = _viewer_target(target_key)
+        if target["id"] != video_id or _plain_identity(target.get("artist", ""), target.get("title", "")) != identity:
+            raise HTTPException(409, "Lyrics target changed while saving")
+        folder.mkdir(parents=True, exist_ok=True)
+        _save_viewer_selection(folder, identity, "none", None)
+        target.update(lyrics=[], lyrics_status="missing", viewer_lyrics_source="missing")
+        if target is state.current:
+            target["lyrics_rev"] = target.get("lyrics_rev", 0) + 1
+            state.lyrics_sent.clear()
+        await state.broadcast()
+    return {"saved": True, "status": "missing", "source": "none"}
 
 @app.post("/api/lyrics/plain/{target_key}")
 async def choose_plain_lyrics(target_key: str, choice: LyricChoice):

@@ -268,6 +268,8 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 .seg[data-action=guide] button{padding:0 9px}
 .lyric-view-status,.lyric-choose-status{flex:none;margin:0 0 8px;color:var(--muted);font-size:12px}.lyric-reader{min-height:120px;flex:1;overflow:auto;margin:0;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);white-space:pre-wrap;overflow-wrap:anywhere;font:400 17px/1.8 system-ui,sans-serif;overscroll-behavior:contain}
 .lyric-choose-pane{flex:1}.lyric-choose-pane .lyric-options{min-height:0;flex:1}.lyric-choose-pane .lyric-preview{display:none}
+.lyric-choose-actions{flex:none;padding-top:10px;margin-top:8px;border-top:1px solid var(--line)}.lyric-choose-actions[hidden]{display:none}
+.lyric-unavailable{width:100%;min-height:42px;padding:8px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);color:var(--muted);font-size:13px;font-weight:650}.lyric-unavailable:disabled{opacity:.65}
 .lyric-search{display:flex;flex:none;gap:8px;margin-bottom:12px}
 .lyric-search input{flex:1;min-width:0;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:#121513;font-size:16px}
 .lyric-search button{padding:0 16px;border-radius:20px;background:var(--lime);color:var(--on-lime);font-weight:700}
@@ -277,6 +279,7 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 .lyric-search-term.active{border-color:var(--lime);color:var(--ink);background:#d5ff6a18}
 .lyric-options{overflow-y:auto;display:grid;gap:8px}
 .lyric-options .muted,.lyric-options .error{font-size:13px}.lyric-options .error{color:var(--red)}
+.lyric-retry{justify-self:start;min-height:38px;padding:6px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13px;font-weight:700}
 .lyric-option{display:grid;gap:9px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);text-align:left}
 .lyric-option div{display:flex;align-items:baseline;gap:8px;min-width:0}
 .lyric-option b{color:var(--lime);font-size:14px;flex:none}

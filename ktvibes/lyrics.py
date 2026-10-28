@@ -35,14 +35,16 @@ def read_plain_cache(path, identity: list[str], now: float | None = None) -> dic
     return None
 
 def read_viewer_selection(path, identity: list[str]) -> dict | None:
-    """Return an explicit, identity-matched manual format choice for the mobile viewer."""
+    """Return an explicit, identity-matched manual lyrics choice for this song."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if (not isinstance(value, dict) or value.get("identity") != identity or
-            value.get("origin") != "manual" or value.get("format") not in ("synced", "plain")):
+            value.get("origin") != "manual" or value.get("format") not in ("synced", "plain", "none")):
         return None
+    if value.get("format") == "none":
+        return value if value.get("record_id") is None else None
     if not isinstance(value.get("record_id"), int) or isinstance(value.get("record_id"), bool):
         return None
     return value

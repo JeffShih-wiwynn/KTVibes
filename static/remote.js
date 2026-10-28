@@ -524,7 +524,8 @@ async function pickLyrics(song,{followCurrent=false}={}){
  const fontControls=el('div',undefined,'lyric-font-controls'),smaller=el('button','A−'),larger=el('button','A+');smaller.type=larger.type='button';smaller.setAttribute('aria-label','Decrease lyrics font size');larger.setAttribute('aria-label','Increase lyrics font size');
  let fontSize=17;try{fontSize=Math.max(13,Math.min(30,Number(localStorage.getItem('ktvibes-lyrics-font-size'))||17));}catch{}
  const setFont=()=>reader.style.fontSize=`${fontSize}px`;setFont();
- const choosePane=el('section',undefined,'lyric-choose-pane'),chooseStatus=el('p',undefined,'lyric-choose-status muted'),form=el('form',undefined,'lyric-search'),input=el('input'),go=el('button','Search'),termPicker=el('div',undefined,'lyric-search-terms'),preview=el('div',undefined,'lyric-preview'),list=el('div',undefined,'lyric-options');
+ const choosePane=el('section',undefined,'lyric-choose-pane'),chooseStatus=el('p',undefined,'lyric-choose-status muted'),form=el('form',undefined,'lyric-search'),input=el('input'),go=el('button','Search'),termPicker=el('div',undefined,'lyric-search-terms'),preview=el('div',undefined,'lyric-preview'),list=el('div',undefined,'lyric-options'),chooseActions=el('div',undefined,'lyric-choose-actions'),unavailable=el('button','No suitable lyrics','lyric-unavailable');
+ unavailable.type='button';chooseActions.append(unavailable);
  input.type='search';input.placeholder='Artist, title, or search terms';input.setAttribute('aria-label','Search lyrics');go.type='submit';form.append(input,go);
  let searchTerms=[];
  const syncSearchTermButtons=()=>{const query=input.value.toLocaleLowerCase();for(const button of termPicker.querySelectorAll('button')){const value=button.dataset.term,key=value.toLocaleLowerCase(),active=query.includes(key);button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));}};
@@ -578,6 +579,7 @@ async function pickLyrics(song,{followCurrent=false}={}){
  async function loadPreview(){const item=eligibleQueue();if(!item)return;try{const data=await api(`/api/queue/${encodeURIComponent(targetKey)}/lyrics`);if(closed||!eligibleQueue())return;preview.replaceChildren(...(data.lyrics||[]).map(line=>el('p',line.text||'')));}catch(error){preview.replaceChildren(el('p',error.message,'error'));}}
  form.onsubmit=e=>{e.preventDefault();input.blur();show(input.value.trim());};
  async function show(query){
+  chooseActions.hidden=true;
   const mine=++searchToken,target=pickerTarget(),searchedKey=targetKey;if(!target||!(eligibleQueue()||isCurrent()||state?.upcoming?.some(item=>item.key===targetKey)||(!targetKey&&!follow&&song.id)))return;
   const wait=el('p',query?'Searching…':'Looking up every version…','muted lyric-wait'),bar=el('span',undefined,'pbar busy classic-only');for(let i=0;i<40;i++){const cell=el('i');cell.style.animationDelay=`${(i*.045).toFixed(3)}s`;bar.append(cell);}wait.append(el('span',query?'검색 중':'모든 가사 버전을 찾는 중','classic-only'),bar);list.replaceChildren(wait);
   try{
@@ -585,6 +587,8 @@ async function pickLyrics(song,{followCurrent=false}={}){
    if(searchedKey)data=await api(`/api/lyrics/choices/${encodeURIComponent(searchedKey)}?q=${encodeURIComponent(query||`${target.artist} ${target.title}`)}`);
    else{const legacy=await api(`/api/songs/${target.id}/lyrics${query?`?q=${encodeURIComponent(query)}`:''}`);data={synced_active:legacy.some(item=>item.current),results:legacy.map(item=>({id:item.id,track:item.track,artist:item.artist,album:item.album,difference:item.difference,formats:{synced:{available:true,current:item.current,language:item.language,lines:item.lines,preview:item.preview},plain:{available:false,selected:false,active:false,preview:[],lines:0}}}))};}
    if(closed||mine!==searchToken||searchedKey!==targetKey||!pickerTarget())return;
+   chooseActions.hidden=!searchedKey;
+   unavailable.textContent=data.selection_format==='none'?'Marked as unavailable':'No suitable lyrics';unavailable.disabled=data.selection_format==='none';
    const options=data.results||[];const none=el('p',undefined,'muted lyric-none');none.append(el('b','No suitable lyrics found','classic-only'),query?'Try fewer words, or use the song title in its original script.':'Search LRCLIB for synced or plain lyrics.');list.replaceChildren(...(options.length?[]:[none]));
    for(const o of options){
     const kinds=['synced','plain'].filter(kind=>o.formats[kind].available),selectedSynced=!!o.formats.synced.current,
@@ -599,7 +603,7 @@ async function pickLyrics(song,{followCurrent=false}={}){
     const block=el('div',undefined,'lyric-card-preview');for(const kind of kinds){const preview=el('div',undefined,'lyric-format-preview');if(kinds.length>1)preview.append(el('span',kind==='synced'?'Synced preview':'Plain preview'));for(const line of o.formats[kind].preview||[])preview.append(el('small',line));block.append(preview);}card.append(block);
     const actions=el('div',undefined,'lyric-card-actions');for(const kind of kinds){const active=kind==='synced'?selectedSynced:selectedPlain,label=active?'Selected':kinds.length>1?`Use ${kind==='synced'?'Synced':'Plain'}`:'Select',select=el('button',label);select.type='button';select.disabled=active||(kind==='synced'&&!!state?.upcoming?.some(item=>item.key===targetKey&&item.status!=='ready'));if(!active)select.onclick=()=>saveChoice(select,o,kind,target);actions.append(select);}if(kinds.length)card.append(actions);list.append(card);
    }
-  }catch(error){if(mine===searchToken)list.replaceChildren(el('p',error.message,'error'));}
+  }catch(error){if(mine===searchToken){chooseActions.hidden=true;const isBusy=error.status===503||error.message.includes('LRCLIB is temporarily busy'),isLimited=error.status===429||error.message.includes('LRCLIB is limiting lyric searches'),retryAfter=Math.max(1,Math.min(60,Math.ceil(error.retryAfter||(isLimited?Number(error.message.match(/wait (\d+) seconds/)?.[1])||5:1)))),message=el('p',isBusy?'LRCLIB is temporarily busy. Please wait 1 second, then try again.':isLimited?`LRCLIB is limiting lyric searches. Please wait ${retryAfter} seconds, then try again.`:'Lyrics search failed. Please try again.','error'),retry=el('button',(isBusy||isLimited)?`Retry in ${retryAfter}s`:'Retry','lyric-retry');retry.type='button';retry.disabled=isBusy||isLimited;retry.onclick=()=>show(input.value.trim());if(isBusy||isLimited)setTimeout(()=>{retry.disabled=false;retry.textContent='Retry';},retryAfter*1000);list.replaceChildren(message,retry);}}
  }
  async function saveChoice(button,option,kind,target){
   const key=targetKey;if(button.disabled||button.dataset.saving)return;
@@ -614,7 +618,17 @@ async function pickLyrics(song,{followCurrent=false}={}){
   }catch(error){toast(error.message,undefined,'err');}
   finally{delete button.dataset.saving;button.classList.remove('busy');if(!closed){buttons.forEach(item=>item.disabled=false);refreshControls();}}
  }
- choosePane.append(chooseStatus,form,termPicker,preview,list);refreshControls();if(eligibleQueue())loadPreview();loadView();
+ unavailable.onclick=async()=>{
+  if(unavailable.disabled||!targetKey)return;
+  unavailable.disabled=true;unavailable.classList.add('busy');
+  try{
+   await api(`/api/lyrics/unavailable/${encodeURIComponent(targetKey)}`,{method:'POST'});
+   if(closed)return;
+   unavailable.textContent='Marked as unavailable';toast('Marked as no suitable lyrics.');await loadView();
+  }catch(error){toast(error.message,undefined,'err');unavailable.disabled=false;}
+  finally{unavailable.classList.remove('busy');}
+ };
+ choosePane.append(chooseStatus,form,termPicker,preview,list,chooseActions);chooseActions.hidden=true;refreshControls();if(eligibleQueue())loadPreview();loadView();
  openLyricsDialog={sheet,close:shut,onState(before,next){
   if(follow&&next?.current?.key!==targetKey){targetKey=next?.current?.key||null;name.lastChild.textContent=next?.current?.title||'Lyrics';setSearchTermTarget(next?.current);lastText=null;lastTextKey=null;reader.textContent='';loadView();searchLoaded=false;if(!choosePane.hidden){searchLoaded=true;show(input.value.trim());}}
   const oldTarget=targetKey&&(before?.current?.key===targetKey?before.current:before?.upcoming?.find(item=>item.key===targetKey));

@@ -19,7 +19,7 @@ export async function api(path, options){
   const response=await fetch(path,options);let data;
   // A proxy or crash can answer with plain text; report the status rather than a JSON parse error.
   try{data=await response.json();}catch{throw new Error(`Server error (${response.status}). Please try again.`);}
-  if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Please check the song details.');return data;
+  if(!response.ok){const error=new Error(typeof data.detail==='string'?data.detail:'Please check the song details.');error.status=response.status;error.retryAfter=Number(response.headers.get('Retry-After'))||undefined;throw error;}return data;
 }
 export const REDUCED = matchMedia('(prefers-reduced-motion: reduce)');
 export const thumbnail = (id, size='mqdefault') => `https://i.ytimg.com/vi/${id}/${size}.jpg`;

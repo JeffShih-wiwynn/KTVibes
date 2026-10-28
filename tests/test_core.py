@@ -11,6 +11,17 @@ from ktvibes.youtube import is_music, parse_title
 from ktvibes.queue import State
 
 class LyricsTests(unittest.TestCase):
+    def test_manual_no_lyrics_selection_is_valid_without_a_record_id(self):
+        from ktvibes.lyrics import read_viewer_selection
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'viewer_selection.json'
+            value = {'identity': ['artist', 'title'], 'format': 'none', 'record_id': None, 'origin': 'manual'}
+            path.write_text(json.dumps(value), encoding='utf-8')
+            self.assertEqual(read_viewer_selection(path, ['artist', 'title']), value)
+            value['record_id'] = 4
+            path.write_text(json.dumps(value), encoding='utf-8')
+            self.assertIsNone(read_viewer_selection(path, ['artist', 'title']))
+
     def test_plain_cache_reader_reports_only_matching_utf8_ready_or_fresh_missing_entries(self):
         from ktvibes.lyrics import read_plain_cache
         with tempfile.TemporaryDirectory() as folder:
