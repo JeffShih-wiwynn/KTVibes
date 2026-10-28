@@ -98,10 +98,9 @@ p{margin:0}a{color:var(--ink);text-decoration:none}
 .hero .bar::before{content:'';position:absolute;inset:-12px 0}  /* a taller touch target than the bar itself */
 .hero .bar i::after{content:'';position:absolute;right:-7px;top:50%;width:14px;height:14px;margin-top:-7px;border-radius:50%;background:var(--lime);box-shadow:0 2px 8px #0008}
 .hero-playback{flex-wrap:wrap}
-.hero-timing{display:flex;align-items:center;gap:8px;margin:0 0 0 auto;flex:none}
-.hero-timing>b{font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap}
-.hero-timing-buttons{display:flex;gap:6px}
-.hero-timing .hero-offset-button{height:44px;min-width:64px;padding:0 10px}
+.hero-timing{display:flex;align-items:center;gap:4px;margin:0 0 0 auto;flex:none}
+.hero-timing>b{min-width:46px;text-align:center;font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap}
+.hero-timing .hero-offset-button{justify-content:center;width:44px;height:44px;min-width:44px;padding:0;border-radius:50%}
 .hero-actions{display:flex;align-items:center;gap:10px;margin-top:14px}
 .hero-actions.hero-utility{justify-content:flex-end;margin-top:8px}
 .spacer{flex:1}
@@ -293,7 +292,6 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 @keyframes fade-in{from{opacity:0}}@keyframes fade-out{to{opacity:0}}
 
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
-@media(max-width:390px){.hero-lyrics{width:44px;padding:0;justify-content:center;gap:0}.hero-lyrics span{display:none}}
-@media(max-width:350px){.hero-settings{width:44px;padding:0;justify-content:center;gap:0}.hero-settings span{display:none}}
+@media(max-width:390px){.hero-timing{margin-left:0}.hero-actions.hero-utility{justify-content:flex-start}.hero-actions.hero-utility .spacer{display:none}.hero-lyrics,.hero-settings{width:44px;padding:0;justify-content:center;gap:0}.hero-lyrics span,.hero-settings span{display:none}}
 /* Classic theme: room time. */
 .room-add{display:flex;gap:8px}

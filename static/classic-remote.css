@@ -428,7 +428,7 @@ body[data-theme=classic] #queue .ready-lamp{font-style:normal;color:#7dff9a;anim
 body[data-theme=classic] #queue .ready-lamp::before{content:'';display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:#7dff9a;box-shadow:0 0 6px #7dff9a;vertical-align:1px;animation:lcd-blink .5s steps(1) 3}
 @keyframes ready-lamp{80%{opacity:1;font-size:inherit}to{opacity:0;font-size:0}}
 body[data-theme=classic] #queue .queue-swipe:not(:first-child) .row.ready:has(.ready-lamp) .status-ko{display:none}
-@media(max-width:390px){body[data-theme=classic] #hero-lyrics{width:44px;padding:0;justify-content:center;gap:0}body[data-theme=classic] #hero-lyrics span{display:none}}
+@media(max-width:390px){body[data-theme=classic] .hero-timing{margin-left:0}body[data-theme=classic] .hero-actions.hero-utility{justify-content:flex-start}body[data-theme=classic] .hero-actions.hero-utility .spacer{display:none}body[data-theme=classic] :is(#hero-lyrics,#open-controls){width:44px;padding:0;justify-content:center;gap:0}body[data-theme=classic] :is(#hero-lyrics,#open-controls) span{display:none}}
 @media(max-width:360px){body[data-theme=classic] .hero-actions{gap:6px}body[data-theme=classic] #hero-play,body[data-theme=classic] #skip{padding-left:10px;padding-right:10px}}
 /* The ⋯ key and its menu (mockup P6): a navy machine menu with the song's number in LCD. */
 body[data-theme=classic] .song-more{right:4px;width:30px;height:30px;border-radius:8px;color:#8a8270;font:700 18px/1 'IBM Plex Sans KR',sans-serif}
