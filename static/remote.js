@@ -244,7 +244,7 @@ function queueRow(item,index,justReady){
  const next=el('button','Next','queue-swipe-action queue-next');next.type='button';next.setAttribute('aria-label',`Move ${item.title} to play next`);next.onclick=()=>prioritizeQueueItem(item.key);
  const remove=el('button','Remove','queue-swipe-action queue-remove');remove.type='button';remove.setAttribute('aria-label',`Remove ${item.title} from the queue`);remove.onclick=()=>removeQueueItem(item);
  const row=el('article',undefined,`row ${item.status}`);
- const thumb=el('div',undefined,'thumb'),image=el('img',undefined,'art');image.src=thumbnail(item.id);image.alt='';thumb.append(image);
+ const thumb=el('div',undefined,'thumb'),image=el('img',undefined,'art');image.src=thumbnail(item.id);image.alt='';image.draggable=false;thumb.append(image);
  // The ring shows while the song prepares, and once more as it turns ready.
  if(item.status!=='ready'&&item.status!=='error'||justReady&&item.status==='ready')thumb.insertAdjacentHTML('beforeend',`<svg class="ring" viewBox="0 0 52 52" style="--c:${RING};--segment:${RING_SEGMENT};--gap:${RING_GAP};--travel:${-RING}" aria-hidden="true"><path class="track" d="M26 1.5H36A14.5 14.5 0 0 1 50.5 16V36A14.5 14.5 0 0 1 36 50.5H16A14.5 14.5 0 0 1 1.5 36V16A14.5 14.5 0 0 1 16 1.5H26Z"/><path class="fill" d="M26 1.5H36A14.5 14.5 0 0 1 50.5 16V36A14.5 14.5 0 0 1 36 50.5H16A14.5 14.5 0 0 1 1.5 36V16A14.5 14.5 0 0 1 16 1.5H26Z"/></svg>`);
  if(justReady&&item.status==='ready')haptic(10);
@@ -277,6 +277,7 @@ function removeQueueItem(item){
 document.addEventListener('touchmove',e=>{if(dragging)e.preventDefault();},{passive:false});
 function dragHandlers(wrap,row){
  let press,startX,startY;
+ row.addEventListener('contextmenu',e=>e.preventDefault());
  row.addEventListener('pointerdown',e=>{
   if(e.target.closest('button'))return;
   startX=e.clientX;startY=e.clientY;press=setTimeout(()=>startDrag(wrap,e),350);
@@ -316,6 +317,7 @@ function finishQueueSwipe(){swipingQueue=null;if(!dragging&&queueShape!==queueRe
 function startDrag(row,e){
  if(dragging)return;
  if(row.classList.contains('queue-swipe')&&openSwipe===row)closeSwipe();
+ if(e.pointerType==='touch'||e.pointerType==='pen'){try{row.setPointerCapture(e.pointerId);}catch{}}
  const rows=[...$('queue').children].filter(r=>r.dataset.key),from=rows.indexOf(row),boxes=rows.map(r=>r.getBoundingClientRect());
  dragging={row,from,to:from,y:e.clientY,rows,keys:rows.map(r=>r.dataset.key),allKeys:state.upcoming.map(item=>item.key),boxes,height:boxes[from].height};
  row.classList.add('lifted');for(const r of rows)if(r!==row)r.classList.add('shifting');
