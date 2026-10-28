@@ -169,6 +169,7 @@ p{margin:0}a{color:var(--ink);text-decoration:none}
 /* Recent: swipe a row left to reveal Delete; ⋯ opens more actions. */
 .swipe{position:relative}
 .swipe .result{position:relative;z-index:1;padding-right:48px;touch-action:pan-y;transition:transform .45s var(--spring-soft),border-radius .3s var(--bouncy)}
+.swipe .result:not(:disabled):active{transform:none}
 .swipe.dragging .result{transition:none}
 .swipe-delete{position:absolute;top:1px;right:1px;bottom:1px;width:88px;border-radius:16px;background:#e5484d;color:#fff;font-weight:700;font-size:14px}
 .swipe:has(.swipe-delete:focus-visible) .result{transform:translateX(-96px)}

@@ -576,10 +576,11 @@ function swipeable(row,song,{recentNext=false}={}){
  }
  wrap.append(row,del,action);
  let start=null,dx=0,dragging=false;
+ const swipeStart=recentNext?16:8;
  row.addEventListener('pointerdown',e=>{delete row.dataset.dragged;if(e.pointerType==='mouse'&&e.button)return;start={x:e.clientX,y:e.clientY,base:wrap.classList.contains('open')?-REVEAL:0};dx=start.base;dragging=false;});
  row.addEventListener('pointermove',e=>{
   if(!start)return;const mx=e.clientX-start.x,my=e.clientY-start.y;
-  if(!dragging){if(Math.abs(my)>8&&Math.abs(my)>Math.abs(mx)){start=null;return;}if(Math.abs(mx)<8)return;dragging=true;row.setPointerCapture(e.pointerId);wrap.classList.add('dragging');if(openSwipe!==wrap)closeSwipe();}
+  if(!dragging){if(Math.abs(my)>8&&Math.abs(my)>Math.abs(mx)){start=null;return;}if(Math.abs(mx)<swipeStart||Math.abs(mx)<Math.abs(my)*1.2)return;dragging=true;row.setPointerCapture(e.pointerId);wrap.classList.add('dragging');if(openSwipe!==wrap)closeSwipe();}
   dx=Math.max(-REVEAL*1.3,Math.min(0,start.base+mx));row.style.transform=`translateX(${dx}px)`;
  });
  const end=()=>{
