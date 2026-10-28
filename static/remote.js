@@ -527,7 +527,7 @@ async function pickLyrics(song,{followCurrent=false}={}){
  const choosePane=el('section',undefined,'lyric-choose-pane'),chooseStatus=el('p',undefined,'lyric-choose-status muted'),form=el('form',undefined,'lyric-search'),input=el('input'),go=el('button','Search'),termPicker=el('div',undefined,'lyric-search-terms'),preview=el('div',undefined,'lyric-preview'),list=el('div',undefined,'lyric-options'),chooseActions=el('div',undefined,'lyric-choose-actions'),unavailable=el('button','No suitable lyrics','lyric-unavailable');
  unavailable.type='button';chooseActions.append(unavailable);
  input.type='search';input.placeholder='Artist, title, or search terms';input.setAttribute('aria-label','Search lyrics');go.type='submit';form.append(input,go);
- let searchTerms=[];
+ let searchTerms=[],searchCooldownTimer=null;
  const syncSearchTermButtons=()=>{const query=input.value.toLocaleLowerCase();for(const button of termPicker.querySelectorAll('button')){const value=button.dataset.term,key=value.toLocaleLowerCase(),active=query.includes(key);button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));}};
  const setSearchTermTarget=target=>{
   searchTerms=lyricsSearchTerms(target?.artist,target?.title);termPicker.replaceChildren();
@@ -544,7 +544,7 @@ async function pickLyrics(song,{followCurrent=false}={}){
  setSearchTermTarget(song);input.addEventListener('input',syncSearchTermButtons);
  fontControls.append(smaller,larger);viewControls.append(fontControls);viewPane.append(viewControls,viewStatus,reader);
  tabs.append(viewTab,chooseTab);panel.append(grip,tabs,viewPane,choosePane);sheet.append(panel);document.body.append(sheet);
- const shut=()=>{if(closed)return;closed=true;viewToken++;searchToken++;sheet.classList.add('out');sheet.addEventListener('animationend',()=>sheet.remove(),{once:true});if(openLyricsDialog?.sheet===sheet)openLyricsDialog=null;};
+ const shut=()=>{if(closed)return;closed=true;viewToken++;searchToken++;clearTimeout(searchCooldownTimer);sheet.classList.add('out');sheet.addEventListener('animationend',()=>sheet.remove(),{once:true});if(openLyricsDialog?.sheet===sheet)openLyricsDialog=null;};
  let gripStart=null,gripMoved=false;
  grip.onclick=()=>{if(gripMoved){gripMoved=false;return;}shut();};
  grip.onpointerdown=e=>{if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();gripStart=e.clientY;gripMoved=false;panel.style.transition='none';grip.setPointerCapture(e.pointerId);};
@@ -579,6 +579,7 @@ async function pickLyrics(song,{followCurrent=false}={}){
  async function loadPreview(){const item=eligibleQueue();if(!item)return;try{const data=await api(`/api/queue/${encodeURIComponent(targetKey)}/lyrics`);if(closed||!eligibleQueue())return;preview.replaceChildren(...(data.lyrics||[]).map(line=>el('p',line.text||'')));}catch(error){preview.replaceChildren(el('p',error.message,'error'));}}
  form.onsubmit=e=>{e.preventDefault();input.blur();show(input.value.trim());};
  async function show(query){
+  if(go.disabled)return;
   chooseActions.hidden=true;
   const mine=++searchToken,target=pickerTarget(),searchedKey=targetKey;if(!target||!(eligibleQueue()||isCurrent()||state?.upcoming?.some(item=>item.key===targetKey)||(!targetKey&&!follow&&song.id)))return;
   const wait=el('p',query?'Searching…':'Looking up every version…','muted lyric-wait'),bar=el('span',undefined,'pbar busy classic-only');for(let i=0;i<40;i++){const cell=el('i');cell.style.animationDelay=`${(i*.045).toFixed(3)}s`;bar.append(cell);}wait.append(el('span',query?'검색 중':'모든 가사 버전을 찾는 중','classic-only'),bar);list.replaceChildren(wait);
@@ -603,7 +604,7 @@ async function pickLyrics(song,{followCurrent=false}={}){
     const block=el('div',undefined,'lyric-card-preview');for(const kind of kinds){const preview=el('div',undefined,'lyric-format-preview');if(kinds.length>1)preview.append(el('span',kind==='synced'?'Synced preview':'Plain preview'));for(const line of o.formats[kind].preview||[])preview.append(el('small',line));block.append(preview);}card.append(block);
     const actions=el('div',undefined,'lyric-card-actions');for(const kind of kinds){const active=kind==='synced'?selectedSynced:selectedPlain,label=active?'Selected':kinds.length>1?`Use ${kind==='synced'?'Synced':'Plain'}`:'Select',select=el('button',label);select.type='button';select.disabled=active||(kind==='synced'&&!!state?.upcoming?.some(item=>item.key===targetKey&&item.status!=='ready'));if(!active)select.onclick=()=>saveChoice(select,o,kind,target);actions.append(select);}if(kinds.length)card.append(actions);list.append(card);
    }
-  }catch(error){if(mine===searchToken){chooseActions.hidden=true;const isBusy=error.status===503||error.message.includes('LRCLIB is temporarily busy'),isLimited=error.status===429||error.message.includes('LRCLIB is limiting lyric searches'),retryAfter=Math.max(1,Math.min(60,Math.ceil(error.retryAfter||(isLimited?Number(error.message.match(/wait (\d+) seconds/)?.[1])||5:1)))),message=el('p',isBusy?'LRCLIB is temporarily busy. Please wait 1 second, then try again.':isLimited?`LRCLIB is limiting lyric searches. Please wait ${retryAfter} seconds, then try again.`:'Lyrics search failed. Please try again.','error'),retry=el('button',(isBusy||isLimited)?`Retry in ${retryAfter}s`:'Retry','lyric-retry');retry.type='button';retry.disabled=isBusy||isLimited;retry.onclick=()=>show(input.value.trim());if(isBusy||isLimited)setTimeout(()=>{retry.disabled=false;retry.textContent='Retry';},retryAfter*1000);list.replaceChildren(message,retry);}}
+  }catch(error){if(mine===searchToken){chooseActions.hidden=true;const isBusy=error.status===503||error.message.includes('LRCLIB is temporarily busy'),isLimited=error.status===429||error.message.includes('LRCLIB is limiting lyric searches'),retryAfter=Math.max(1,Math.min(60,Math.ceil(error.retryAfter||(isLimited?Number(error.message.match(/wait (\d+) seconds/)?.[1])||5:1)))),message=el('p',isBusy?'LRCLIB is temporarily busy. Please wait 1 second, then try again.':isLimited?`LRCLIB is limiting lyric searches. Please wait ${retryAfter} seconds, then try again.`:'Lyrics search failed. Please try again.','error');list.replaceChildren(message);if(isBusy||isLimited){go.disabled=true;clearTimeout(searchCooldownTimer);searchCooldownTimer=setTimeout(()=>{if(!closed&&mine===searchToken)go.disabled=false;},retryAfter*1000);}}}
  }
  async function saveChoice(button,option,kind,target){
   const key=targetKey;if(button.disabled||button.dataset.saving)return;

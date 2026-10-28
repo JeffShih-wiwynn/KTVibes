@@ -279,7 +279,7 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 .lyric-search-term.active{border-color:var(--lime);color:var(--ink);background:#d5ff6a18}
 .lyric-options{overflow-y:auto;display:grid;gap:8px}
 .lyric-options .muted,.lyric-options .error{font-size:13px}.lyric-options .error{color:var(--red)}
-.lyric-retry{justify-self:start;min-height:38px;padding:6px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13px;font-weight:700}
+.lyric-search button:disabled{opacity:.42;filter:grayscale(.6);cursor:not-allowed}
 .lyric-option{display:grid;gap:9px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);text-align:left}
 .lyric-option div{display:flex;align-items:baseline;gap:8px;min-width:0}
 .lyric-option b{color:var(--lime);font-size:14px;flex:none}
