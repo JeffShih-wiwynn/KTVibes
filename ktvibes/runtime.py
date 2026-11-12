@@ -8,6 +8,7 @@ from .library import SongLibrary
 from .lyric_service import LyricsService
 from .updates import ReleaseUpdates, project_version
 from .identities import IdentityStore
+from .auth import Access
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -21,8 +22,11 @@ class Runtime:
     lyrics: LyricsService = field(init=False)
     updates: ReleaseUpdates = field(init=False)
     identities: IdentityStore = field(init=False)
+    access: Access = field(init=False)
+    asset_version: str = field(init=False, default="")
 
     def __post_init__(self):
+        self.access = Access()
         self.library = SongLibrary(self.cache)
         self.lyrics = LyricsService(self.state, self.library)
         self.updates = ReleaseUpdates(self.root)
@@ -41,7 +45,13 @@ class Runtime:
                 digest.update(path.name.encode() + path.read_bytes())
         return digest.hexdigest()[:12]
 
+    def join_url(self):
+        url = self.remote_url()
+        return url + "#key=" + self.access.key if self.access.enabled else url
+
     def remote_url(self):
+        if self.access.enabled:
+            return self.access.external_url
         if os.environ.get("KTVIBES_REMOTE_URL"):
             url = os.environ["KTVIBES_REMOTE_URL"].rstrip("/")
             return url if url.endswith("/remote") else url + "/remote"

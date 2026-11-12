@@ -1,3 +1,4 @@
+import {createInvite} from './tv-invite.js';
 import {createBrandRotation} from './tv-brand.js';
 import {fillFrame} from './video-frame.js';
 import {$,el,connect,api,clock,throttle,prepLabel,syncRanges,REDUCED,thumbnail,newSongs} from './shared.js';
@@ -54,12 +55,14 @@ function saved(){try{return JSON.parse(localStorage.getItem(SETTINGS))||{};}catc
 function remember(s){try{localStorage.setItem(SETTINGS,JSON.stringify(Object.fromEntries(SETTING_KEYS.map(k=>[k,s[k]]))));}catch{}}
 function restore(s){const mine=saved();for(const action of SETTING_KEYS){const value=mine[action];if(value!==undefined&&value!==s[action])send({action,value});}}
 let remoteAddress='';
+const updateInvite=createInvite();
 async function refreshRemoteAddress(){
  try{
   const c=await api('/api/config');
+  await updateInvite(c.remote_url);
   if(c.remote_url===remoteAddress)return;
   remoteAddress=c.remote_url;
-  $('remote-url').textContent=$('sticker-url').textContent=remoteAddress;
+  $('sticker-url').textContent=remoteAddress;
   for(const img of document.querySelectorAll('img[src^="/api/qr.svg"]')){
    const url=new URL(img.src);url.searchParams.set('address',remoteAddress);img.src=url.pathname+url.search;
   }

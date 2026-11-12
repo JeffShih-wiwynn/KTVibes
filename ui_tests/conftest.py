@@ -145,6 +145,10 @@ class Remote:
                 data.update(body)
         elif path == "/api/config":
             data = {"remote_url": "http://127.0.0.1/remote", "version": "0.7.1", "update": self.update, "update_check_complete": True}
+        elif path == "/api/auth/status":
+            data = {"credential_type": "password", "enabled": False}
+        elif path == "/api/invite":
+            data = {"url": "http://127.0.0.1/remote"}
         elif path == "/api/recent":
             data = self.recent
         elif path in ("/api/suggest", "/api/songbook"):

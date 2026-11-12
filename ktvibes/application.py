@@ -33,15 +33,19 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
 
     app = FastAPI(title='KTVibes', lifespan=lifespan)
     app.state.runtime = runtime
+    runtime.asset_version = runtime.build()
+    app.mount(f'/static/{runtime.asset_version}', StaticFiles(directory=runtime.root / 'static'), name='versioned-static')
     app.mount('/static', StaticFiles(directory=runtime.root / 'static'), name='static')
 
     @app.middleware('http')
     async def revalidate_static(request, call_next):
         response = await call_next(request)
         if request.url.path.startswith(('/static/', '/media/')) or request.url.path in ('/', '/tv', '/remote'):
-            response.headers['Cache-Control'] = 'no-cache'
+            response.headers['Cache-Control'] = 'no-store' if request.url.path in ('/', '/tv', '/remote') else 'no-cache'
         return response
 
+    app.middleware("http")(runtime.access.middleware)
+    app.include_router(runtime.access.router())
     app.include_router(system.create_router(runtime))
     from .routes import identities
     app.include_router(identities.create_router(runtime))

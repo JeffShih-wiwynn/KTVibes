@@ -75,3 +75,48 @@ synchronization or installer behavior on every machine.
 Refactors retain endpoint names, queue snapshots, cache formats and settings
 precedence. Desktop restart/rollback and real audio synchronization still require
 platform testing beyond browser fixtures and unit tests.
+
+## Optional external access
+
+`Runtime.access` owns the password verifier, signed sessions, QR secret and login
+rate limits for one server run. `KTVIBES_EXTERNAL_ENABLED=1` requires a valid
+`KTVIBES_REMOTE_URL` HTTPS address and `KTVIBES_PASSWORD_HASH`. Invalid external
+configuration prevents startup rather than exposing an unprotected service.
+The legacy URL override alone only changes the advertised address.
+
+External HTTP requests require an owner or remote session. Only owners can open
+Player or obtain `/api/qr.svg`; QR pairing grants remote scope. The same scope
+and origin checks apply before registering WebSocket clients. Media and catalog
+APIs are protected too. Login assets and `/api/auth/{status,login,pair}` remain
+public. Credentials are HttpOnly, SameSite=Strict session cookies; external HTTPS
+cookies are Secure, while local desktop Player can use a localhost cookie.
+
+QR URLs carry `#key=…`: the fragment is never sent in HTTP request URLs. The access
+screen removes it before exchanging it through POST `/api/auth/pair`. A QR key is
+reusable by guests during one run; it does not grant Player/TV authority. Server
+restart invalidates all keys and signed cookies. Runtime secrets are not persisted.
+
+Desktop launchers pass a separate random `KTVIBES_DESKTOP_TOKEN`; its Bearer header
+only permits `/api/config` for readiness/version/address polling, never QR or
+playback access. Settings save salted PBKDF2-SHA256 verifiers (600,000 iterations),
+not plaintext passwords. Blank password preserves the saved verifier; disabling
+External address or Reset clears the external URL and verifier on Apply. Existing
+network.json files without these optional fields remain compatible.
+
+
+PIN-capable settings record `credential_type=pin` and pass
+`KTVIBES_CREDENTIAL_TYPE=pin`. Missing type means a legacy password; those settings
+still start with password login, but desktop Apply requires a new numeric PIN.
+The existing login POST body uses `password` for compatibility; PIN mode validates
+at least six ASCII digits. Login status advertises the credential type for the
+keypad. Owner-only GET `/api/invite` supplies the full fragment URL for Player's
+link/copy/share actions; `/api/config` still never exposes a key. External listeners
+bind only the configured port, while LAN listeners retain the candidate sequence.
+POSIX listeners use SO_REUSEADDR for fast restarts, Windows uses exclusive binds.
+The macOS shell readiness probe uses the desktop credential and `/api/config`.
+
+Player, Remote and login documents reference `/static/<build>/` assets. Relative
+JavaScript imports and CSS resources stay under that build namespace, preventing
+Cloudflare or browser caches from combining entry points and dependencies from
+different releases. Entry documents use `Cache-Control: no-store`; the original
+`/static/` URLs remain available for compatibility.

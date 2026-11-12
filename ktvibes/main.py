@@ -30,24 +30,14 @@ def run():
     if sys.argv[1:] == ["update"]:
         return update()
     import uvicorn
-    import socket
     from pathlib import Path
     preferred = app.state.runtime.port
-    candidates = list(range(preferred, min(preferred + 5, 65536)))
-    candidates += list(range(preferred + 10000, min(preferred + 10005, 65536)))
     listener = None
     if os.environ.get('KTVIBES_AUTO_PORT') == '1':
-        for candidate in candidates:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                sock.bind(('0.0.0.0', candidate))
-                sock.listen(2048)
-            except OSError:
-                sock.close()
-                continue
-            listener = sock
-            app.state.runtime.port = candidate
-            break
+        from .listener import reserve
+        listener = reserve(preferred, external=app.state.runtime.access.enabled)
+        if listener is not None:
+            app.state.runtime.port = listener.getsockname()[1]
         if listener is None:
             print('KTVIBES_PORT_CONFLICT', flush=True)
             if conflict_file := os.environ.get('KTVIBES_CONFLICT_FILE'):

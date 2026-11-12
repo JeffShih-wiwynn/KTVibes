@@ -78,3 +78,31 @@ For module responsibilities and dependency boundaries, see [Code structure](docs
 ## Upstream and license
 
 This project is based on [andyleenz/KTVibes](https://github.com/andyleenz/KTVibes). The upstream MIT license and copyright notice are retained in [`LICENSE`](LICENSE). Changes in this fork are maintained independently.
+
+### External address and access password
+
+In desktop **Network Settings → Advanced settings**, enable **External address**,
+enter the public HTTPS address supplied by your tunnel (for example,
+`https://ktv.example.com`), and set a PIN of at least 6 digits. **Apply**
+restarts the server; failure restores the previous settings. Leave PIN blank
+when editing settings to keep the existing PIN. Disabling External address
+or Reset clears the external address/password when applied.
+
+Open Player and enter the PIN. Its QR code lets guests join Remote without
+entering that PIN. Anyone with the current QR can control Remote, but cannot
+use that credential to take over Player. QR codes and browser sessions expire on
+server restart; scan the new QR to reconnect. Inner-network mode keeps direct,
+password-free access to `/remote`.
+
+The External address setting advertises a URL; it does not create a Cloudflare
+Tunnel or configure Cloudflare Access. Tunnel and HTTPS setup are managed
+separately. An additional Cloudflare Access login would still apply before the
+request reaches KTVibes. Application login attempts are rate limited; Cloudflare
+rate limiting can provide another layer.
+
+External mode keeps the configured port fixed: a conflict is reported instead of
+switching ports and breaking the tunnel route. LAN mode retains automatic port
+recovery. Player shows a short URL with copy/share actions that include the same
+per-run key as its QR. Manually typing the short URL requires the PIN. Legacy
+passwords continue working until the next external-settings Apply, which requires
+a new numeric PIN.

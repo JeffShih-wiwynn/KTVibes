@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var loginItem: NSMenuItem!
     private var network = NetworkPreferences.load()
     private var networkWindow: NetworkWindow?
+    private var desktopToken = UUID().uuidString + UUID().uuidString
     private var instanceID = UUID().uuidString
     private var changingNetwork = false
     private var activePort: Int?
@@ -68,7 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         environment["KTVIBES_AUTO_PORT"] = "1"
         environment["KTVIBES_PORT_FILE"] = Self.applicationSupportURL.appendingPathComponent("active-port").path
         environment["KTVIBES_ADVERTISE_IP"] = network.ip
-        environment.removeValue(forKey: "KTVIBES_REMOTE_URL")
+        desktopToken = UUID().uuidString + UUID().uuidString
+        environment["KTVIBES_DESKTOP_TOKEN"] = desktopToken
+        environment["KTVIBES_EXTERNAL_ENABLED"] = (network.external_url ?? "").isEmpty ? "0" : "1"
+        environment["KTVIBES_REMOTE_URL"] = network.external_url ?? ""
+        environment["KTVIBES_CREDENTIAL_TYPE"] = network.credential_type ?? "password"
+        environment["KTVIBES_PASSWORD_HASH"] = network.password_hash ?? ""
+        networkWindow?.desktopToken = desktopToken
         instanceID = UUID().uuidString
         activePort = nil
         portConflict = false
@@ -110,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             networkWindow = NetworkWindow()
             networkWindow?.apply = { [weak self] preferences in self?.applyNetwork(preferences) }
         }
+        networkWindow?.desktopToken = desktopToken
         networkWindow?.present(network, activePort: activePort, conflict: portConflict)
     }
 
@@ -154,7 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func waitForNetwork(attempts: Int, completion: @escaping (Bool) -> Void) {
         guard !stopping, attempts > 0 else { completion(false); return }
         readActivePort()
-        let request = URLRequest(url: URL(string: "http://127.0.0.1:\(activePort ?? network.port)/api/config")!, timeoutInterval: 1)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(activePort ?? network.port)/api/config")!, timeoutInterval: 1)
+        request.setValue("Bearer " + desktopToken, forHTTPHeaderField: "Authorization")
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -190,7 +199,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshReleaseInfo() {
         guard !stopping else { return }
         readActivePort()
-        let request = URLRequest(url: URL(string: "http://127.0.0.1:\(activePort ?? network.port)/api/config")!, timeoutInterval: 3)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(activePort ?? network.port)/api/config")!, timeoutInterval: 3)
+        request.setValue("Bearer " + desktopToken, forHTTPHeaderField: "Authorization")
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
         guard let data, let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let self else { return }
