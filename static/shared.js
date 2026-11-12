@@ -1,3 +1,5 @@
+// Authenticated pages can be revisited through a QR without retaining its credential.
+if(new URLSearchParams(location.hash.slice(1)).has('key'))history.replaceState(null,'',location.pathname+location.search);
 export const $ = id => document.getElementById(id);
 export function el(tag, text, className) { const node=document.createElement(tag); if(text!==undefined)node.textContent=text; if(className)node.className=className; return node; }
 // A page left open across a KTVibes update reloads once to pick up the new files.
@@ -10,13 +12,14 @@ export function connect(role, {onState, onError, onOpen, onEvent, onClose}) {
     socket=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws?role=${role}`);
     socket.onopen=()=>onOpen?.();
     socket.onmessage=e=>{const data=JSON.parse(e.data);if(data.type==='state'){if(reloadIfUpdated(data.build))return;onState(data);}else if(data.type==='error')onError(data.message);else onEvent?.(data);};
-    socket.onclose=e=>{onClose?.(e);if(e.code!==4001)setTimeout(open,1500);};
+    socket.onclose=e=>{onClose?.(e);if(e.code===4003){location.reload();return;}if(e.code!==4001)setTimeout(open,1500);};
   }
   open();
   return message=>{if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));else onError('Reconnecting. Please try again.');};
 }
 export async function api(path, options){
   const response=await fetch(path,options);let data;
+  if(response.status===401){location.reload();throw new Error("Sign in to continue.");}
   if(response.status===204)return null;
   // A proxy or crash can answer with plain text; report the status rather than a JSON parse error.
   try{data=await response.json();}catch{throw new Error(`Server error (${response.status}). Please try again.`);}

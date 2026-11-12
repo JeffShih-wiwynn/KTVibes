@@ -31,6 +31,9 @@ def create_router(runtime):
     async def websocket(ws: WebSocket):
         await ws.accept()
         role = ws.query_params.get("role", "remote")
+        if runtime.access.enabled and (not runtime.access.scope(ws) or not runtime.access.origin_ok(ws) or role == "tv" and runtime.access.scope(ws) != "owner"):
+            await ws.close(code=4003)
+            return
         if role == "tv" and runtime.state.player is not None:
             # Newest TV wins: a reload must not be locked out by its own stale socket.
             previous = runtime.state.player

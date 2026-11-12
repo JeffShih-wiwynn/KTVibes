@@ -179,3 +179,5 @@ body:not([data-theme=classic]) #on-deck li::before{content:none}
 body:not([data-theme=classic]) #on-deck .on-deck-song{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 body:not([data-theme=classic]) #on-deck .song-requester{justify-content:flex-end;margin:6px 0 0;font-weight:400}
 body:not([data-theme=classic]) #on-deck .song-requester span{max-width:16ch}
+
+#remote-url{display:flex;align-items:center;flex-wrap:wrap;gap:12px}#remote-url>a{color:inherit;overflow-wrap:anywhere}.invite-actions{display:inline-flex;gap:4px}.invite-actions[hidden]{display:none}.invite-actions button{background:transparent;color:inherit;padding:6px;border:0;cursor:pointer}.invite-actions svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.invite-notice{font-size:14px;color:var(--text,#f5f6ed)}

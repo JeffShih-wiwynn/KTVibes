@@ -106,7 +106,7 @@ $updateTimer.add_Tick({
         if ($script:portConflict) { $versionItem.Text = 'Port conflict'; return }
     }
     try {
-        $config = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $script:activePort + '/api/config') -TimeoutSec 2
+        $config = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $script:activePort + '/api/config') -Headers @{Authorization=('Bearer ' + $script:desktopToken)} -TimeoutSec 2
         if ($config.instance_id -ne $script:networkInstance) { return }
         if ($config.version) { $script:currentVersion = [string]$config.version }
         if ($config.update -and $config.update.version -and $config.update.url) {

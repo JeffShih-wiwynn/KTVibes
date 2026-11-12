@@ -25,7 +25,12 @@ function Start-KTVibes {
     $start.EnvironmentVariables['KTVIBES_PORT_FILE'] = $script:activePortFile
     $start.EnvironmentVariables['KTVIBES_CONFLICT_FILE'] = $script:conflictFile
     $start.EnvironmentVariables['KTVIBES_ADVERTISE_IP'] = $script:networkIP
-    $start.EnvironmentVariables.Remove('KTVIBES_REMOTE_URL')
+    $script:desktopToken = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
+    $start.EnvironmentVariables['KTVIBES_DESKTOP_TOKEN'] = $script:desktopToken
+    $start.EnvironmentVariables['KTVIBES_EXTERNAL_ENABLED'] = $(if ($script:networkExternal) { '1' } else { '0' })
+    $start.EnvironmentVariables['KTVIBES_REMOTE_URL'] = $script:networkExternal
+    $start.EnvironmentVariables['KTVIBES_CREDENTIAL_TYPE'] = $(if ($script:credentialType) { $script:credentialType } else { 'password' })
+    $start.EnvironmentVariables['KTVIBES_PASSWORD_HASH'] = $script:networkHash
     $script:networkInstance = [Guid]::NewGuid().ToString('N')
     $start.EnvironmentVariables['KTVIBES_INSTANCE_ID'] = $script:networkInstance
     if ($script:networkBusy) { $start.EnvironmentVariables['KTVIBES_OPEN_BROWSER'] = '0' }

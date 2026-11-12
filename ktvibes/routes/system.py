@@ -5,7 +5,8 @@ import xml.etree.ElementTree as ET
 import qrcode
 import qrcode.image.svg
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
+from ..assets import document
 
 def create_router(runtime):
     router = APIRouter()
@@ -13,21 +14,25 @@ def create_router(runtime):
     @router.get('/')
     @router.get('/tv')
     async def tv():
-        return FileResponse(runtime.root / "static/tv.html")
+        return document(runtime, "tv.html")
 
     @router.get('/remote')
     async def remote():
-        return FileResponse(runtime.root / "static/remote.html")
+        return document(runtime, "remote.html")
 
     @router.get('/api/config')
     async def config():
         return {"remote_url": runtime.remote_url(), "port": runtime.port, "instance_id": os.environ.get('KTVIBES_INSTANCE_ID'), "version": runtime.project_version(), "update": runtime.updates.info, "update_check_complete": runtime.updates.check_complete}
 
+    @router.get('/api/invite')
+    async def invite():
+        return {'url': runtime.join_url()}
+
     @router.get('/api/qr.svg')
     async def qr(branded: bool = False):
         out = io.BytesIO()
         code = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H if branded else qrcode.constants.ERROR_CORRECT_M)
-        code.add_data(runtime.remote_url())
+        code.add_data(runtime.join_url())
         code.make(fit=True)
         code.make_image(image_factory=qrcode.image.svg.SvgPathImage).save(out)
         if branded:
