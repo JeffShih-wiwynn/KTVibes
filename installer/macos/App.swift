@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 import ServiceManagement
 import Darwin
@@ -25,6 +26,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var portConflict = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Login and service launches should leave the user's browser alone.
+        let launchEvent = NSAppleEventManager.shared().currentAppleEvent
+        let launchSource = launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+        let backgroundLaunch = launchEvent?.eventID == kAEOpenApplication &&
+            (launchSource == keyAELaunchedAsLogInItem || launchSource == keyAELaunchedAsServiceItem)
         NSApp.setActivationPolicy(.accessory)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = Self.makeStatusImage()
@@ -46,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.items.forEach { $0.target = self }
         statusItem.menu = menu
         renderVersionItem()
-        startKTVibes()
+        startKTVibes(openPlayerWhenReady: !backgroundLaunch)
         updateTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.refreshReleaseInfo() }
     }
 
@@ -57,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    private func startKTVibes() {
+    private func startKTVibes(openPlayerWhenReady: Bool = false) {
         guard !stopping else { return }
         guard let resources = Bundle.main.resourceURL, let executable = Bundle.main.executableURL else { return }
         let script = resources.appendingPathComponent("setup-and-run.sh")
@@ -66,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "KTVIBES_APP_RESOURCES": resources.path
         ]) { _, new in new }
         environment["KTVIBES_PORT"] = String(network.port)
+        // The desktop app opens Player after readiness, rather than the server.
+        environment["KTVIBES_OPEN_BROWSER"] = "0"
         environment["KTVIBES_AUTO_PORT"] = "1"
         environment["KTVIBES_PORT_FILE"] = Self.applicationSupportURL.appendingPathComponent("active-port").path
         environment["KTVIBES_ADVERTISE_IP"] = network.ip
@@ -81,6 +89,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         portConflict = false
         try? FileManager.default.removeItem(at: Self.applicationSupportURL.appendingPathComponent("active-port"))
         environment["KTVIBES_INSTANCE_ID"] = instanceID
+        readyOutput = ""
+        var shouldOpenPlayer = openPlayerWhenReady
         server.onOutput = { [weak self] text in
             guard let self else { return }
             self.readyOutput += text
@@ -90,7 +100,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if self.readyOutput.contains("KTVIBES_SERVER_READY") {
                 self.readyOutput = ""
-                // The menu bar app starts the server in the background. Users open the player explicitly.
+                if shouldOpenPlayer {
+                    shouldOpenPlayer = false
+                    self.openPlayer()
+                }
             }
             self.readyOutput = String(self.readyOutput.suffix(64))
         }
@@ -138,7 +151,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.statusItem.button?.image = Self.makeStatusImage()
                         self.networkWindow?.busy(false, message: "Available")
                         self.networkWindow?.present(next, activePort: self.activePort, conflict: false)
-                        self.openPlayer()
                     } catch { self.restoreNetwork(previous, reason: "Could not save settings: \(error.localizedDescription)") }
                 } else { self.restoreNetwork(previous, reason: "The new server could not start. The port may be in use. Restoring previous settings…") }
             }

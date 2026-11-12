@@ -169,7 +169,7 @@ function Apply-NetworkSettings {
         }
         if (-not $nextHash) { $script:networkHint.Text = 'Set a PIN of at least 6 digits.'; return }
     }
-    if ($nextPort -eq $script:networkPort -and $nextIP -eq $script:networkIP -and $nextExternal -eq $script:networkExternal -and $nextHash -eq $script:networkHash -and -not $script:portConflict) { $script:networkForm.Close(); return }
+    if ($nextPort -eq $script:networkPort -and $nextIP -eq $script:networkIP -and $nextExternal -eq $script:networkExternal -and $nextHash -eq $script:networkHash -and -not $script:portConflict) { return }
     $script:previousType = $script:credentialType
     $script:previousExternal = $script:networkExternal; $script:previousHash = $script:networkHash
     $script:previousPort = $script:networkPort; $script:previousIP = $script:networkIP
@@ -230,7 +230,10 @@ function Update-NetworkSettings {
                     Move-Item -LiteralPath ($script:networkFile + '.tmp') -Destination $script:networkFile -Force -ErrorAction Stop
                 } catch { Restore-NetworkSettings ('Could not save settings: ' + $_.Exception.Message); return }
                 $script:networkBusy = $false
-                $script:networkForm.Close()
+                $script:networkAdvancedToggle.Enabled = $true; $script:networkAdvanced.Enabled = $true; $script:networkButtons.Enabled = $true
+                $script:networkApply.Text = 'Apply'
+                $script:networkHint.Text = 'Applying changes will restart the server. Leave PIN blank to keep an existing PIN.'
+                $script:networkHint.ForeColor = [System.Drawing.SystemColors]::ControlText
                 return
             }
         } elseif ([DateTime]::UtcNow -gt $script:networkDeadline -or ($script:server -and $script:server.HasExited -and (Test-Path $script:conflictFile))) {
