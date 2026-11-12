@@ -18,6 +18,7 @@ swiftc -O -parse-as-library -target arm64-apple-macos13.0 \
     -module-cache-path "$OUTPUT/ModuleCache" \
     "$ROOT/installer/macos/App.swift" \
     "$ROOT/installer/macos/ServerProcess.swift" \
+    "$ROOT/installer/macos/NetworkSettings.swift" \
     -o "$CONTENTS/MacOS/KTVibes"
 rm -rf "$OUTPUT/ModuleCache"
 install -m 755 "$ROOT/installer/macos/setup-and-run.sh" "$RESOURCES/setup-and-run.sh"

@@ -1,59 +1,17 @@
+import {createBrandRotation} from './tv-brand.js';
+import {fillFrame} from './video-frame.js';
 import {$,el,connect,api,clock,throttle,prepLabel,syncRanges,REDUCED,thumbnail,newSongs} from './shared.js';
 import {renderRequester,requesterBadge} from './requester.js';
 const music=$('instrumental'),voice=$('vocals'),video=$('backdrop');
 video.muted=true;
 let breather=0,guide,state,lyrics=[],firstLine=-1,stemGain=1,currentKey=null,context,musicGain,voiceGain,shifter,enabled=false,activeLine=-1,starting=false,generation=0,lastReport=0,seekTo=null,serverSkew=0,buffering=false,videoStarting=false,lyricsPositioned=false,lastSeek=0,shownPair='',fitKey='';
-let brandTimer=null,brandRotation=false,showBrand=false;
-function rotateBrand(enabled){
- if(enabled===brandRotation)return;
- brandRotation=enabled;clearTimeout(brandTimer);brandTimer=null;
- document.body.classList.remove('player-transition');
- document.body.classList.toggle('player-brand-visible',!enabled);
- if(!enabled)return;
- showBrand=false;
- const cycle=()=>{
-  document.body.classList.add('player-transition');
-  brandTimer=setTimeout(()=>{
-   showBrand=!showBrand;
-   document.body.classList.toggle('player-brand-visible',showBrand);
-   document.body.classList.remove('player-transition');
-   brandTimer=setTimeout(cycle,6000);
-  },600);
- };
- document.body.classList.remove('player-brand-visible');
- brandTimer=setTimeout(cycle,6000);
-}
+const rotateBrand = createBrandRotation();
 const error=text=>$('tv-error').textContent=text;
 // This screen remembers its own display settings and restores them each time it (re)connects.
 const SETTINGS='ktvibes.tv-settings',SETTING_KEYS=['lyric_scale','vocal','guide','video_mode','lyric_mode'];let restoring=false;
 // On (re)connect, also tell the server whether sound is on, so remotes know if playback can start.
 // Many music videos have black bars baked into the frame; sample a few frames, find the bars,
 // then zoom past them so the picture itself fills the screen. The smallest bars seen win, so a dark scene can't over-crop.
-const probe=document.createElement('canvas');probe.width=160;probe.height=90;const probeContext=probe.getContext('2d',{willReadFrequently:true});
-function fillFrame(v){
- let bars,samples=0,lastSample=0;
- const reset=()=>{bars=null;samples=0;lastSample=0;v.style.transform='';};
- const apply=()=>{
-  if(!bars||!v.videoWidth)return;
-  const W=innerWidth,H=innerHeight,w=v.videoWidth,h=v.videoHeight,cw=w*(1-bars.left-bars.right),ch=h*(1-bars.top-bars.bottom);
-  const full=Math.max(W/w,H/h),crop=Math.max(W/cw,H/ch)*1.01,scale=crop/full;
-  const dx=(bars.right-bars.left)/2*w*crop,dy=(bars.bottom-bars.top)/2*h*crop;
-  v.style.transform=scale>1.01?`translate(${dx}px,${dy}px) scale(${scale})`:'';
- };
- const sample=()=>{
-  try{probeContext.drawImage(v,0,0,160,90);}catch{return;}
-  const {data}=probeContext.getImageData(0,0,160,90),dark=(x0,y0,x1,y1)=>{for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){const i=(y*160+x)*4;if(data[i]+data[i+1]+data[i+2]>72)return false;}return true;};
-  let top=0,bottom=0,left=0,right=0;
-  while(top<45&&dark(0,top,160,top+1))top++;while(bottom<45&&dark(0,89-bottom,160,90-bottom))bottom++;
-  while(left<80&&dark(left,0,left+1,90))left++;while(right<80&&dark(159-right,0,160-right,90))right++;
-  if(top+bottom>60||left+right>110)return;  // a mostly black frame (fade, title card) says nothing about the bars
-  const found={top:top/90,bottom:bottom/90,left:left/160,right:right/160};
-  bars=bars?Object.fromEntries(Object.keys(found).map(k=>[k,Math.min(bars[k],found[k])])):found;samples++;apply();
- };
- v.addEventListener('loadstart',reset);
- v.addEventListener('timeupdate',()=>{if(samples<8&&v.currentTime-lastSample>1.5||v.currentTime<lastSample){lastSample=v.currentTime;sample();}});
- addEventListener('resize',apply);
-}
 fillFrame(video);
 // An empty stage loops random cached music videos, muted, behind the idle screen.
 const ambient=$('ambient');ambient.muted=true;fillFrame(ambient);let ambientIds=[],ambientOn=false;

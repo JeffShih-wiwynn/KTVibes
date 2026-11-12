@@ -43,3 +43,35 @@ optimistically through its supplied setter.
 See [Testing](testing.md) for validation commands and the limits of fixture-based
 browser checks. The current suite does not prove real media preparation, audio
 synchronization or installer behavior on every machine.
+
+## Extension boundaries
+
+- `lyrics.py` owns LRCLIB lookup and matching, and re-exports the existing lyric
+  functions for callers. Text/LRC parsing lives in `lyric_text.py`, pronunciation
+  models and guides in `lyric_guides.py`, and energy/timing algorithms in
+  `lyric_timing.py`. `lyric_cache.py` validates cached viewer choices and expiry.
+  Pure lyric operations have no HTTP or playback-state dependency.
+- `cache.py` provides atomic JSON and LRC writes. Callers retain responsibility
+  for holding the per-video cache lock across read/modify/write operations.
+- `worker.run` owns its video-download task registry and dispatches songs through
+  `prepare_song`, which coordinates `prepare_media` and `prepare_lyrics`.
+  Runtime instances do not share download registries. Preparation still resolves
+  manual lyric selections made while downloads or alignment are in progress.
+- `queue.State` is the public playback/queue interface. `queue_storage.py` handles
+  its saved representation; `queue_transport.py` handles publication, slow-client
+  eviction and sending full lyrics to the TV once per song.
+- `remote-catalog.js` owns Search, Recent, explicit add/play-next actions and Recent
+  swipes. It receives the current-state getter and render callback so optimistic
+  queue changes use the latest snapshot. `remote.js` coordinates the page.
+- `tv-brand.js` owns the stage's QR/brand rotation timer. `video-frame.js` owns
+  baked-in black-bar detection and fitting for performance and ambient videos.
+- macOS `NetworkSettings.swift` owns preferences and the native settings window;
+  `App.swift` coordinates the tray and restart/rollback operation. The build
+  compiles both alongside `ServerProcess.swift`.
+- Windows `server-process.ps1` owns start/stop and the child environment. The tray
+  dot-sources it alongside `network-settings.ps1` in the same script scope. The
+  installer includes both and CI parses every script. WinForms remains the UI.
+
+Refactors retain endpoint names, queue snapshots, cache formats and settings
+precedence. Desktop restart/rollback and real audio synchronization still require
+platform testing beyond browser fixtures and unit tests.
