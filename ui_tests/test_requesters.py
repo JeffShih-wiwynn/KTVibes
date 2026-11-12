@@ -132,6 +132,60 @@ def test_tv_brand_rotation_keeps_header_aligned(remote, page, remote_url):
     assert card.bounding_box() == initial
 
 
+def test_default_tv_long_now_playing_text_stays_before_queue(remote, page, remote_url):
+    page.set_viewport_size({'width': 1536, 'height': 864})
+    remote.state['current'].update(title='月と私のかくれんぼ Official Music Video ' * 8,
+                                   artist='yutori official channel')
+    page.route('**/api/ambient', lambda route: route.fulfill(json=[]))
+    page.route('**/api/qr.svg', lambda route: route.fulfill(content_type='image/svg+xml', body='<svg xmlns="http://www.w3.org/2000/svg"/>'))
+    page.route_web_socket('**/ws?role=tv', remote.websocket)
+    page.goto(remote_url.replace('/remote', '/tv'))
+
+    row = page.locator('.now-songline')
+    title, artist, queue = page.locator('#song-title'), page.locator('#song-artist'), page.locator('.top-queue')
+    expect(queue).to_be_visible()
+    row_box, artist_box, queue_box = row.bounding_box(), artist.bounding_box(), queue.bounding_box()
+    assert row_box['x'] + row_box['width'] <= queue_box['x']
+    assert artist_box['x'] + artist_box['width'] <= queue_box['x']
+    assert title.evaluate('el => el.scrollWidth > el.clientWidth')
+    expect(artist).to_have_text('yutori official channel')
+
+
+def test_default_tv_intro_card_fits_long_titles(remote, page, remote_url):
+    page.set_viewport_size({'width': 1440, 'height': 900})
+    remote.state['current']['title'] = '月と私のかくれんぼ Official Music Video ウィッチウォッチ 第2クールエンディングテーマ ' * 5
+    page.route('**/api/ambient', lambda route: route.fulfill(json=[]))
+    page.route('**/api/qr.svg', lambda route: route.fulfill(content_type='image/svg+xml', body='<svg xmlns="http://www.w3.org/2000/svg"/>'))
+    page.route_web_socket('**/ws?role=tv', remote.websocket)
+    page.goto(remote_url.replace('/remote', '/tv'))
+
+    title = page.locator('#card-title')
+    expect(title).to_have_text(remote.state['current']['title'])
+    assert title.evaluate('el => parseFloat(el.style.fontSize) < 90')
+    assert title.evaluate('el => getComputedStyle(el).webkitLineClamp === "3"')
+    assert title.evaluate('el => el.getBoundingClientRect().height <= innerHeight * .6 + 1')
+
+
+def test_default_tv_disconnect_replaces_corner_up_next(remote, page, remote_url):
+    page.route('**/api/ambient', lambda route: route.fulfill(json=[]))
+    page.route('**/api/qr.svg', lambda route: route.fulfill(content_type='image/svg+xml', body='<svg xmlns="http://www.w3.org/2000/svg"/>'))
+    page.route_web_socket('**/ws?role=tv', remote.websocket)
+    page.goto(remote_url.replace('/remote', '/tv'))
+    queue = page.locator('.top-queue')
+    connection = page.locator('#connection')
+    if page.viewport_size['width'] <= 520:
+        expect(queue).to_be_hidden()
+    else:
+        expect(queue).to_be_visible()
+    expect(connection).to_have_text('Connected')
+
+    remote.socket.close(code=4001, reason='test disconnect')
+    expect(connection).to_have_text('Disconnected')
+    expect(queue).to_be_hidden()
+    status_box, side_box = connection.bounding_box(), page.locator('.tv-side').bounding_box()
+    assert status_box['x'] + status_box['width'] <= side_box['x'] + side_box['width'] + 1
+
+
 def test_tv_refreshes_qr_when_network_address_changes(remote, page, remote_url):
     config = {'remote_url': 'http://192.168.1.10:8765/remote'}
     page.route('**/api/config', lambda route: route.fulfill(json=config))
