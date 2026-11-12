@@ -39,6 +39,7 @@ Source: "python-runtime.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "KTVibes.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "KTVibes.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "tray.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "server-process.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "network-settings.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "show-logs.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "stop-running.ps1"; Flags: dontcopy

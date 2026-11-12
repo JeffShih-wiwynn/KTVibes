@@ -6,28 +6,17 @@ are local to that instance; cache filenames and response shapes stay unchanged.
 import asyncio
 from contextlib import suppress
 import json
-import os
 import time
-import uuid
 from pathlib import Path
 from fastapi import HTTPException
 from . import lyrics, stems, worker, youtube
+from .cache import write_json as _plain_cache_write
 from .schemas import LyricChoice, OffsetChoice
 
 PLAIN_ERROR_COOLDOWN = 30
 
 def _plain_identity(artist: str, title: str) -> list[str]:
     return [lyrics.plain_identity(artist), lyrics.plain_identity(title)]
-
-
-def _plain_cache_write(path: Path, value: dict) -> None:
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        with suppress(OSError):
-            temporary.unlink()
 
 
 def _save_viewer_selection(folder: Path, identity: list[str], fmt: str, record_id: int | None) -> None:

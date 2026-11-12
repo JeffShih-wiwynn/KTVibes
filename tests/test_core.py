@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 import unittest.mock
+from ktvibes import lyric_guides
 from ktvibes.lyrics import parse_lrc
 from ktvibes.youtube import is_music, parse_title
 from ktvibes.queue import State
@@ -612,24 +613,18 @@ class WorkerRunTests(unittest.IsolatedAsyncioTestCase):
 
 class WorkerTests(unittest.TestCase):
     def test_worker_metadata_paths_use_utf8(self):
-        import ast
-        import inspect
         from ktvibes import worker
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             metadata = {'artist': '日本語', 'title': '周杰倫', 'lyrics_record_id': 42}
             worker.save_meta(folder, metadata)
             self.assertEqual(json.loads((folder / 'meta.json').read_text(encoding='utf-8')), metadata)
-        tree = ast.parse(inspect.getsource(worker.run))
-        reads = [node for node in ast.walk(tree)
-                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                 and node.func.attr == 'read_text'
-                 and isinstance(node.func.value, ast.Name) and node.func.value.id == 'meta_path']
-        self.assertEqual(len(reads), 6)
-        for read in reads:
-            encoding = next(keyword.value for keyword in read.keywords if keyword.arg == 'encoding')
-            self.assertIsInstance(encoding, ast.Constant)
-            self.assertEqual(encoding.value, 'utf-8')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            worker.save_lyrics(path, '[00:01.00]日本語與繁體中文')
+            self.assertEqual((path / 'lyrics.lrc').read_text(encoding='utf-8'), '[00:01.00]日本語與繁體中文')
+            worker.save_lyrics(path, '')
+            self.assertFalse((path / 'lyrics.lrc').exists())
 
     def test_old_stems_migrate_to_opus_with_gain(self):
         import tempfile
@@ -725,7 +720,7 @@ class LyricsMatchTests(unittest.TestCase):
 
         units = [[char, index, index + 1] for index, char in enumerate('思い出が')]
         lines = [{'t': 0, 'text': '思い出が', 'units': units}]
-        with unittest.mock.patch.object(lyrics, '_kakasi', Kakasi()):
+        with unittest.mock.patch.object(lyric_guides, '_kakasi', Kakasi()):
             lyrics.add_kana(lines)
         self.assertEqual([unit[6] for unit in units], ['おもいで', '', '', ''])
         self.assertEqual([unit[7] for unit in units], [0, 0, 0, None])
@@ -955,7 +950,7 @@ class LyricsMatchTests(unittest.TestCase):
         self.assertEqual(romanize('실라면'), ['sil', 'la', 'myeon'])
         units = [['눈', 0, 1], ['물', 1, 2], ['이 ', 2, 3], ['좋', 3, 4], ['은', 4, 5]]
         g2p = Mock(return_value='눈무리 조은')
-        with patch.object(lyrics, '_g2p', None), patch.dict(sys.modules, {'g2pk2': SimpleNamespace(G2p=Mock(return_value=g2p))}):
+        with patch.object(lyric_guides, '_g2p', None), patch.dict(sys.modules, {'g2pk2': SimpleNamespace(G2p=Mock(return_value=g2p))}):
             add_korean_romanization([{'t': 0, 'text': '눈물이 좋은', 'units': units}])
         self.assertEqual(g2p.call_count, 1)
         self.assertEqual([u[3] for u in units], ['nun', 'mu', 'ri', 'jo', 'eun'])
@@ -974,7 +969,7 @@ class LyricsMatchTests(unittest.TestCase):
             if name == 'g2pk2':
                 raise AssertionError('g2pk2 should not be imported')
             return real_import(name, *args, **kwargs)
-        with unittest.mock.patch.object(lyrics, '_g2p', None), unittest.mock.patch.object(builtins, '__import__', side_effect=reject_g2pk2):
+        with unittest.mock.patch.object(lyric_guides, '_g2p', None), unittest.mock.patch.object(builtins, '__import__', side_effect=reject_g2pk2):
             add_korean_romanization(lines)
 
     def test_aligner_letters_cover_all_scripts(self):

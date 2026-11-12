@@ -72,3 +72,8 @@ cancellation during shutdown. Browser regressions also cover the lyrics panel
 following a song transition and TV connection status after transport callbacks.
 
 Module responsibilities are documented in [Code structure](architecture.md).
+
+The preparation tests also check that separate workers own separate video task
+registries, and failed atomic JSON replacement preserves the previous file and
+cleans its temporary file. Unicode metadata/LRC tests assert persisted behavior
+rather than counting file-read statements in the worker implementation.

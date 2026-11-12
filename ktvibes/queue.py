@@ -1,6 +1,8 @@
 """All state mutations run on the event loop; queue entries have unique identities."""
 import asyncio
+from . import queue_storage, queue_transport
 import json
+from .cache import write_json
 import math
 from pathlib import Path
 import re
@@ -83,72 +85,19 @@ class State:
                 "revision": self.revision, "build": self.build}
 
     def restore(self, path: Path, seed=lambda: {}):
-        """Reload the saved queue; songs are prepared again (fast from cache) and the current one resumes."""
-        self.path = path
-        try:
-            saved = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            saved = {}
-        # Before play history existed, fall back to whatever seed() knows (e.g. cache timestamps).
-        self.played = saved["played"] if isinstance(saved.get("played"), dict) else seed()
-        self.theme = saved.get("theme") if saved.get("theme") in DISPLAY["theme"] else "default"
-        self.room_ends = float(saved["room_ends"]) if self.theme == "classic" and isinstance(saved.get("room_ends"), (int, float)) else None
-        entries = saved.get("upcoming", [])
-        if saved.get("current"):
-            entries = [saved["current"], *entries]
-        for entry in entries:
-            item = self.entry(entry["id"], entry["artist"], entry["title"], entry.get("requester"))
-            if entry is saved.get("current"):
-                item["resume"] = float(entry.get("position") or 0)
-            self.upcoming.append(item)
-        self.wake.set()
+        queue_storage.restore(self, path, seed, DISPLAY["theme"])
 
     def save(self):
-        if self.path is None:
-            return
-        brief = lambda i: {"id": i["id"], "artist": i["artist"], "title": i["title"], **({"requester": i["requester"]} if i.get("requester") else {})}
-        data = {"current": self.current and {**brief(self.current), "position": self.position},
-                "upcoming": [brief(i) for i in self.upcoming if i["status"] != "error"], "played": self.played,
-                "theme": self.theme, "room_ends": self.room_ends}
-        temporary = self.path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(self.path)
+        queue_storage.save(self)
 
     async def broadcast(self, persist=True):
-        async with self.broadcast_lock:
-            self.revision += 1
-            if persist:
-                try:
-                    self.save()
-                    self.saved_at = time.monotonic()
-                except OSError:
-                    pass  # a full disk should not stop the party
-            message = {"type": "state", **self.snapshot(lyrics=False)}
-            key = self.current and self.current["key"]
-            async def deliver(ws):
-                # A TV gets the current song's lyrics once per song (and again after reconnecting).
-                out = message
-                if key and self.clients.get(ws) == "tv" and self.lyrics_sent.get(ws) != key:
-                    out = {**message, "current": {**message["current"], "lyrics": self.current["lyrics"]}}
-                if await self.send(ws, out):
-                    self.lyrics_sent[ws] = key
-            await asyncio.gather(*(deliver(ws) for ws in list(self.clients)))
+        await queue_transport.broadcast(self, persist)
 
     async def send(self, ws, message):
-        """Send to one client; a socket that can't take it within 2 s is dropped."""
-        try:
-            await asyncio.wait_for(ws.send_json(message), timeout=2)
-            return True
-        except Exception:
-            self.disconnect(ws)
-            return False
+        return await queue_transport.send(self, ws, message)
 
     def disconnect(self, ws):
-        self.clients.pop(ws, None)
-        self.lyrics_sent.pop(ws, None)
-        if self.player is ws:
-            self.player = None
-            self.audio = False
+        queue_transport.disconnect(self, ws)
 
     def cache_lock(self, video_id):
         """Serialize read/modify/write operations for one video's cache."""
@@ -199,9 +148,7 @@ class State:
             async with self.cache_lock(self.current["id"]):
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 meta["lyric_offset"] = self.offset
-                temporary = meta_path.with_name(f".meta.{uuid.uuid4().hex}.tmp")
-                temporary.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-                temporary.replace(meta_path)
+                write_json(meta_path, meta, indent=2)
         except (OSError, ValueError):
             pass
 
@@ -228,9 +175,7 @@ class State:
                     raise ValueError("Lyrics settings are not ready yet")
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 meta["lyric_offset"] = value
-                temporary = meta_path.with_name(f".meta.{uuid.uuid4().hex}.tmp")
-                temporary.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-                temporary.replace(meta_path)
+                write_json(meta_path, meta, indent=2)
         except (OSError, ValueError) as exc:
             raise ValueError("Unable to save lyric offset") from exc
         live["offset"] = value

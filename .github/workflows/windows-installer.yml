@@ -37,7 +37,7 @@ jobs:
         run: |
           $tokens = $null
           $errors = $null
-          foreach ($script in @('tray.ps1', 'network-settings.ps1')) {
+          foreach ($script in @('tray.ps1', 'network-settings.ps1', 'server-process.ps1')) {
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path "installer/windows/$script"), [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
           }
