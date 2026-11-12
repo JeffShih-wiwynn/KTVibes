@@ -178,6 +178,20 @@ body:not([data-theme=classic]) #on-deck li{margin-bottom:10px}
 body:not([data-theme=classic]) #on-deck li::before{content:none}
 body:not([data-theme=classic]) #on-deck .on-deck-song{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 body:not([data-theme=classic]) #on-deck .song-requester{justify-content:flex-end;margin:6px 0 0;font-weight:400}
+
+/* Keep the Default TV header's queue in its own column instead of overlaying the song title. */
+body:not([data-theme=classic]) .tv-side{flex:0 0 min(30vw,420px);width:min(30vw,420px);min-width:0}
+body:not([data-theme=classic]) .tv-side .tv-tools{position:static;width:100%;justify-content:flex-end}
+body:not([data-theme=classic]) .tv-side .tv-stack{position:static;width:100%;max-width:100%;align-items:flex-end}
+body:not([data-theme=classic]) .tv-side .top-queue{width:100%;max-width:100%}
+body:not([data-theme=classic]).connection-lost .tv-side .top-queue{display:none}
+body:not([data-theme=classic]) #now-card:not([hidden]){width:100%;min-width:0}
+body:not([data-theme=classic]) .now-songline{width:100%;overflow:hidden;white-space:nowrap}
+body:not([data-theme=classic]) #song-title{flex:0 1 auto;min-width:0;white-space:nowrap}
+body:not([data-theme=classic]) #song-artist{flex:0 0 auto;min-width:0;max-width:35%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body:not([data-theme=classic]) .title-card h1{width:min(82vw,1440px);max-height:min(60vh,3.15em);overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;font-size:clamp(36px,min(7vw,10vh),112px);line-height:1.05}
+body:not([data-theme=classic]) .title-card h1.fitting{display:block;-webkit-line-clamp:unset}
+@media(max-width:520px){body:not([data-theme=classic]) .tv-side{flex-basis:30vw;width:30vw}}
 body:not([data-theme=classic]) #on-deck .song-requester span{max-width:16ch}
 
 #remote-url{display:flex;align-items:center;flex-wrap:wrap;gap:12px}#remote-url>a{color:inherit;overflow-wrap:anywhere}.invite-actions{display:inline-flex;gap:4px}.invite-actions[hidden]{display:none}.invite-actions button{background:transparent;color:inherit;padding:6px;border:0;cursor:pointer}.invite-actions svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.invite-notice{font-size:14px;color:var(--text,#f5f6ed)}

@@ -34,6 +34,7 @@ function showConnection(online) {
  $('connection').textContent = online ? 'Connected' : 'Disconnected';
  $('connection').classList.toggle('online', online);
  $('connection').classList.toggle('lost', !online);
+ document.body.classList.toggle('connection-lost', !online);
 }
 const send = connect('tv', {
  onState: render,
@@ -114,7 +115,31 @@ function render(next){
   lyricsPositioned=false;
  }
  if(!state.playing){music.pause();voice.pause();video.pause();}
+ fitDefaultTitle();
 }
+let titleFitKey='';
+function fitDefaultTitle(){
+ const title=$('card-title');
+ if(!title)return;
+ const theme=document.body.dataset.theme||'default';
+ const key=`${theme}|${innerWidth}|${innerHeight}|${title.textContent}`;
+ if(key===titleFitKey)return;
+ titleFitKey=key;
+ if(theme==='classic'){title.style.fontSize='';return;}
+ title.style.fontSize='';
+ title.classList.add('fitting');
+ const max=parseFloat(getComputedStyle(title).fontSize),min=36,step=2;
+ let size=max;
+ for(;size>min;size-=step){
+  title.style.fontSize=`${size}px`;
+  if(title.scrollHeight<=title.clientHeight+1)break;
+ }
+ title.style.fontSize=`${Math.max(min,size)}px`;
+ title.classList.remove('fitting');
+}
+let titleFitTimer;
+addEventListener('resize',()=>{clearTimeout(titleFitTimer);titleFitTimer=setTimeout(fitDefaultTitle,100);});
+document.fonts?.ready.then(()=>{titleFitKey='';fitDefaultTitle();});
 // Lyrics for the song on stage; a remote can swap in another version mid-song (lyrics_rev).
 let lyricsRev=0,songLyrics=[],splitDone=false,slots=[],counting=null,still=false;  // counting: the line showing count-in dots; still: place the next lines without animating (after a resize)
 const showVideo=()=>!!state?.current?.video&&state.video_mode!=='hide';
