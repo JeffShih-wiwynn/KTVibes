@@ -141,7 +141,7 @@ def test_version_checks_and_confirmation(config, monkeypatch, target, confirm):
     monkeypatch.setattr(curses, 'has_colors', lambda: False)
     monkeypatch.setattr(linux, 'status', lambda: None)
     monkeypatch.setattr(linux, 'enabled', lambda: False)
-    monkeypatch.setattr(linux_updates, 'channel', lambda: 'dev')
+    monkeypatch.setattr(linux_updates, 'branch', lambda: 'dev')
     monkeypatch.setattr(linux_updates, 'available', lambda mode: target)
     prepare = Mock(return_value='/tmp/helper')
     monkeypatch.setattr(linux_updates, 'prepare_handoff', prepare)
