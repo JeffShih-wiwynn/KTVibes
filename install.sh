@@ -1,39 +1,127 @@
 #!/usr/bin/env bash
-# KTVibes installer for Linux and macOS:
-#   curl -LsSf https://raw.githubusercontent.com/JeffShih-wiwynn/KTVibes/dev/install.sh | bash
-# Installs uv if needed, clones (or updates) KTVibes into ~/KTVibes, installs its Python
-# dependencies, and adds a `ktvibes` command to ~/.local/bin.
+# KTVibes Linux installer. macOS is distributed as a DMG.
 set -euo pipefail
-DIR="${KTVIBES_DIR:-$HOME/KTVibes}"
-missing=()
-for tool in git ffmpeg node; do command -v "$tool" >/dev/null || missing+=("$tool"); done
-if command -v node >/dev/null && (( $(node -p 'process.versions.node.split(".")[0]') < 22 )); then
-  echo "Node.js $(node --version) is too old; KTVibes needs 22+ (https://nodejs.org or nvm)."; exit 1
+
+channel=stable
+while (($#)); do
+  case "$1" in
+    --channel)
+      if (($# < 2)); then
+        echo "Usage: install.sh [--channel stable|dev]" >&2
+        exit 2
+      fi
+      channel="$2"
+      shift 2
+      ;;
+    --channel=*)
+      channel="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: install.sh [--channel stable|dev]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      echo "Usage: install.sh [--channel stable|dev]" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$channel" != stable && "$channel" != dev ]]; then
+  echo "Invalid channel '$channel'. Choose 'stable' or 'dev'." >&2
+  exit 2
 fi
-if ((${#missing[@]})); then
-  echo "Missing: ${missing[*]}"
-  if [[ "$(uname)" == Darwin ]]; then echo "Install with: brew install ${missing[*]}"
-  else echo "Install with your package manager, e.g. sudo apt install ${missing[*]/node/nodejs}  (Node.js 22+ needed: distro packages are often older; use https://nodejs.org or nvm)"; fi
+
+if [[ "$(uname -s)" != Linux ]]; then
+  echo "This installer is for Linux. On macOS, install KTVibes from the DMG release." >&2
   exit 1
 fi
-if ! command -v uv >/dev/null; then
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="${UV_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}:$HOME/.local/bin:$PATH"
+
+for tool in git curl ffmpeg node; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "Missing required command: $tool" >&2
+    echo "Install it with your distribution's package manager, then run this installer again." >&2
+    exit 1
+  fi
+done
+if (( $(node -p 'process.versions.node.split(".")[0]') < 22 )); then
+  echo "Node.js 22 or later is required (https://nodejs.org or nvm)." >&2
+  exit 1
 fi
-REPO="https://github.com/JeffShih-wiwynn/KTVibes.git"
-if [[ -d "$DIR/.git" ]]; then
-  git -C "$DIR" remote set-url origin "$REPO"
-  git -C "$DIR" pull --ff-only
+
+if [[ "$channel" == dev ]]; then
+  target_ref=refs/heads/dev
+  echo "Installing the dev channel."
 else
-  git clone --branch dev "$REPO" "$DIR"
+  release_api="https://api.github.com/repos/JeffShih-wiwynn/KTVibes/releases/latest"
+  if ! release_tag="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$release_api" | node -e '
+    let body = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => body += chunk);
+    process.stdin.on("end", () => {
+      const release = JSON.parse(body);
+      if (typeof release.tag_name !== "string") process.exitCode = 1;
+      else process.stdout.write(release.tag_name);
+    });
+  ')"; then
+    echo "Could not determine the latest stable GitHub Release." >&2
+    exit 1
+  fi
+  if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Unexpected stable release tag: $release_tag" >&2
+    exit 1
+  fi
+  target_ref="refs/tags/$release_tag"
+  echo "Installing stable release $release_tag."
 fi
-(cd "$DIR" && uv sync --no-dev)
-mkdir -p "$HOME/.local/bin"
-cat > "$HOME/.local/bin/ktvibes" <<LAUNCHER
+
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
+app_dir="$data_home/ktvibes"
+bin_dir="$HOME/.local/bin"
+repo="https://github.com/JeffShih-wiwynn/KTVibes.git"
+
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$PATH"
+fi
+uv_bin="$(command -v uv)"
+
+mkdir -p "$data_home" "$cache_home/ktvibes" "$bin_dir"
+if [[ -e "$app_dir" && ! -d "$app_dir/.git" ]]; then
+  echo "Refusing to replace $app_dir because it is not a KTVibes Git installation." >&2
+  exit 1
+elif [[ -d "$app_dir/.git" ]]; then
+  git -C "$app_dir" remote set-url origin "$repo"
+  if [[ -n "$(git -C "$app_dir" status --porcelain)" ]]; then
+    echo "Refusing to update $app_dir because it contains local changes." >&2
+    echo "Back up or discard those changes, then run the installer again." >&2
+    exit 1
+  fi
+else
+  git clone "$repo" "$app_dir"
+fi
+git -C "$app_dir" fetch origin "$target_ref"
+git -C "$app_dir" reset --hard FETCH_HEAD
+
+(cd "$app_dir" && uv sync --locked --no-dev)
+
+cat > "$bin_dir/ktvibes" <<LAUNCHER
 #!/usr/bin/env bash
-cd "$DIR" && exec uv run --no-dev ktvibes "\$@"
+set -euo pipefail
+export KTVIBES_CACHE="\${XDG_DATA_HOME:-\$HOME/.local/share}/ktvibes/cache"
+export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}"
+cd "$app_dir"
+exec "$uv_bin" run --frozen --no-sync --no-dev ktvibes "\$@"
 LAUNCHER
-chmod +x "$HOME/.local/bin/ktvibes"
+chmod 755 "$bin_dir/ktvibes"
+
 echo
-echo "Installed. Run: ktvibes   then open http://localhost:8765 on the TV computer."
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "(Add ~/.local/bin to your PATH, or run $HOME/.local/bin/ktvibes)";; esac
+echo "KTVibes installed. Run: $bin_dir/ktvibes"
+echo "Then open http://localhost:8765 on the TV computer."
+case ":${PATH}:" in
+  *":$bin_dir:"*) ;;
+  *) echo "Add $bin_dir to PATH to run 'ktvibes' directly." ;;
+esac

@@ -50,10 +50,16 @@ Settings are stored in `~/Library/Application Support/KTVibes/network.json` on m
 
 ### Linux
 
-The installer requires Git, FFmpeg and Node.js 22 or later. It installs uv, clones this fork's `dev` branch into `~/KTVibes`, installs Python dependencies and adds a `ktvibes` command:
+The installer requires Git, FFmpeg and Node.js 22 or later. It installs uv if needed, installs KTVibes under `~/.local/share/ktvibes`, and adds a `ktvibes` command under `~/.local/bin`. Application data, including the song library and queue, is kept under the XDG data directory; model downloads use the XDG cache directory. XDG directory environment variables are respected. The installer only updates its own installation and leaves `~/KTVibes` source checkouts alone:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/JeffShih-wiwynn/KTVibes/dev/install.sh | bash
+```
+
+The installer defaults to the latest stable GitHub Release. To install the development branch instead, pass the channel option:
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/JeffShih-wiwynn/KTVibes/dev/install.sh | bash -s -- --channel dev
 ```
 
 If you prefer to install from source:
@@ -73,7 +79,7 @@ For module responsibilities and dependency boundaries, see [Code structure](docs
 - When a newer stable release is available, the Remote shows an update icon. Open it to see the version and the GitHub Release page; downloading and installing remain manual.
 - **Windows:** Download and run the newer installer. It updates the application in the selected folder and keeps `cache/`.
 - **macOS:** Replace KTVibes in Applications with the newer app. Your songs, lyrics, queue and models remain in Application Support.
-- **Linux:** Stop KTVibes and run `ktvibes update`. Your songs, lyrics and queue remain in the cache.
+- **Linux:** Rerun the install command to update the managed installation. Your songs, lyrics and queue remain in the XDG data directory.
 
 ## Upstream and license
 

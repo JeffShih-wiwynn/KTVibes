@@ -211,10 +211,10 @@ footer .brand{font-size:44px;display:block;margin-bottom:18px}footer .pill{margi
  <div class="install reveal">
   <h2 style="font-size:clamp(32px,4.5vw,48px)">Install in one command</h2>
   <p style="margin:10px 0 28px">Needs a computer connected to the TV. An NVIDIA GPU or Apple Silicon Mac makes songs ready in seconds.</p>
-  <div class="tabs" role="tablist" aria-label="Operating system"><button role="tab" id="tab-unix" aria-controls="cmdbox" aria-selected="true" data-script="install.sh" data-cmd="curl -LsSf https://raw.githubusercontent.com/andyleenz/KTVibes/main/install.sh | bash">macOS / Linux</button><button role="tab" id="tab-win" aria-controls="cmdbox" aria-selected="false" tabindex="-1" data-script="install.ps1" data-cmd="irm https://raw.githubusercontent.com/andyleenz/KTVibes/main/install.ps1 | iex">Windows</button></div>
-  <div class="cmd" id="cmdbox" role="tabpanel"><code id="cmd">curl -LsSf https://raw.githubusercontent.com/andyleenz/KTVibes/main/install.sh | bash</code>
+  <div class="tabs" role="tablist" aria-label="Operating system"><button role="tab" id="tab-unix" aria-controls="cmdbox" aria-selected="true" data-script="install.sh" data-cmd="curl -LsSf https://raw.githubusercontent.com/JeffShih-wiwynn/KTVibes/dev/install.sh | bash">Linux</button><button role="tab" id="tab-win" aria-controls="cmdbox" aria-selected="false" tabindex="-1" data-script="installer" data-cmd="Download KTVibes-Setup-x64.exe from GitHub Releases">Windows installer</button><button role="tab" id="tab-mac" aria-controls="cmdbox" aria-selected="false" tabindex="-1" data-script="release" data-cmd="Download the macOS DMG from GitHub Releases">macOS DMG</button></div>
+  <div class="cmd" id="cmdbox" role="tabpanel"><code id="cmd">curl -LsSf https://raw.githubusercontent.com/JeffShih-wiwynn/KTVibes/dev/install.sh | bash</code>
    <button class="copy" id="copy" aria-label="Copy command"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="3"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div>
-  <a class="script" id="script" href="https://github.com/andyleenz/KTVibes/blob/main/install.sh">View script ↗</a>
+  <a class="script" id="script" href="https://github.com/JeffShih-wiwynn/KTVibes/blob/dev/install.sh">View installer ↗</a>
   <ol><li>Run <b>ktvibes</b></li><li>Open <b>http://localhost:8765</b> on the TV and click <b>Enable sound</b></li><li>Scan the QR code with your phone and start queuing</li></ol>
  </div>
 </div></section>
@@ -252,7 +252,7 @@ function pick(tab){
  tabs.forEach(t=>{t.setAttribute('aria-selected',t===tab);t.tabIndex=t===tab?0:-1;});
  if(!still.matches)cmd.animate([{opacity:0,transform:'translateY(8px)'},{opacity:1,transform:'none'}],{duration:350,easing:'cubic-bezier(.34,1.56,.64,1)'});
  cmd.textContent=tab.dataset.cmd;
- script.href='https://github.com/andyleenz/KTVibes/blob/main/'+tab.dataset.script;
+ script.href=tab.dataset.script==='release'?'https://github.com/JeffShih-wiwynn/KTVibes/releases/latest':tab.dataset.script==='installer'?'https://github.com/JeffShih-wiwynn/KTVibes/releases/latest':'https://github.com/JeffShih-wiwynn/KTVibes/blob/dev/'+tab.dataset.script;
 }
 tabs.forEach((tab,i)=>{tab.onclick=()=>pick(tab);
  // Standard tablist keys: arrows move between tabs.
