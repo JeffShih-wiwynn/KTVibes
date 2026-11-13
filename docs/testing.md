@@ -55,6 +55,9 @@ between-song card at 1080p and 720p, including the Classic reservation board.
 Remote layout checks use long song titles and requester names at 360, 959, 960 and
 1440 pixels, and verify that search actions, Settings and Lyrics panels stay within
 their columns or viewport.
+Recovery checks exercise the real WebSocket reconnect timer for both Remote and
+Player, restore the latest queue after a disconnect, and verify that a changed
+server build reloads the page once without sending skip or queue removal commands.
 
 The `Remote UI tests` workflow runs on branch pushes, pull requests and manual
 dispatch. Failed runs upload screenshots and Playwright traces from `test-results/`.
