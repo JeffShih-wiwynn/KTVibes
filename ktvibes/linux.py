@@ -69,6 +69,8 @@ def install():
 
 def serve():
     settings = preferences()
+    from .acceleration import settings as acceleration_settings
+    os.environ['KTVIBES_DEVICE'] = acceleration_settings().get('backend', 'cpu')
     directory = config_dir()
     runtime = dict(token=secrets.token_urlsafe(32), instance=secrets.token_hex(16))
     save(directory / 'runtime.json', runtime)
@@ -335,6 +337,25 @@ def tui(screen):
             except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
                 message = str(error)
 
+    def acceleration():
+        from .acceleration import available, settings, switch, LABELS
+        modes = available()
+        current = settings().get('backend', 'cpu')
+        selected = choose('AI Acceleration · Current: ' + LABELS[current],
+                          [LABELS[mode] for mode in modes] + ['Cancel'])
+        if selected is None or selected == len(modes) or modes[selected] == current:
+            return
+        if choose('Switching downloads packages and restarts the server.', ['Cancel', 'Apply']) != 1:
+            return
+        # Let uv display its progress outside curses, then restore the terminal UI.
+        curses.def_prog_mode()
+        curses.endwin()
+        try:
+            switch(modes[selected])
+        finally:
+            curses.reset_prog_mode()
+            screen.refresh()
+
     index = 0
     message = ''
     message_kind = 'status'
@@ -356,7 +377,7 @@ def tui(screen):
         if message:
             rows.append(row(message, message_kind, False))
         rows.extend([row('Open Player'), row('Show Logs'),
-                row('SETTINGS', 'section', False), row('Network Settings…'),
+                row('SETTINGS', 'section', False), row('Network Settings…'), row('AI Acceleration…'),
                 row('Launch at Login     ' + ('[x]' if enabled() else '[ ]')),
                 row('SERVICE', 'section', False), row('Detach', 'action'), row('Quit', 'danger')])
         draw('KTVibes', rows, index, '↑↓ Move  Enter Select  Ctrl+C Detach')
@@ -364,7 +385,7 @@ def tui(screen):
         if key == 3:
             return
         if key in (curses.KEY_UP, curses.KEY_DOWN):
-            index = (index + (1 if key == curses.KEY_DOWN else -1)) % 7
+            index = (index + (1 if key == curses.KEY_DOWN else -1)) % 8
         if key in (ord('q'), 27) or key not in (10, 13):
             continue
         try:
@@ -393,10 +414,12 @@ def tui(screen):
             elif index == 3:
                 network()
             elif index == 4:
-                systemctl('disable' if enabled() else 'enable', UNIT)
+                acceleration()
             elif index == 5:
-                return
+                systemctl('disable' if enabled() else 'enable', UNIT)
             elif index == 6:
+                return
+            elif index == 7:
                 systemctl('stop', UNIT)
                 return
         except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as error:

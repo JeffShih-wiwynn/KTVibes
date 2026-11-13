@@ -38,9 +38,38 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-xpu"
+url = "https://download.pytorch.org/whl/xpu"
+explicit = true
+
+[project.optional-dependencies]
+cpu = ["torch==2.7.1; sys_platform == 'linux'", "torchaudio==2.7.1; sys_platform == 'linux'"]
+cuda = ["torch==2.7.1; sys_platform == 'linux'", "torchaudio==2.7.1; sys_platform == 'linux'"]
+xpu = ["torch==2.7.1; sys_platform == 'linux'", "torchaudio==2.7.1; sys_platform == 'linux'", "pytorch-triton-xpu==3.3.1; sys_platform == 'linux'"]
+
+[tool.uv]
+conflicts = [[{extra = "cpu"}, {extra = "cuda"}, {extra = "xpu"}]]
+
 [tool.uv.sources]
-torch = { index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }
-torchaudio = { index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }
+pytorch-triton-xpu = { index = "pytorch-xpu" }
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'win32'" },
+  { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux'" },
+  { index = "pytorch-cu128", extra = "cuda", marker = "sys_platform == 'linux'" },
+  { index = "pytorch-xpu", extra = "xpu", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'win32'" },
+  { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux'" },
+  { index = "pytorch-cu128", extra = "cuda", marker = "sys_platform == 'linux'" },
+  { index = "pytorch-xpu", extra = "xpu", marker = "sys_platform == 'linux'" },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

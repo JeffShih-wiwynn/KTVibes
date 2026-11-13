@@ -62,10 +62,13 @@ The installer defaults to the latest stable GitHub Release and saves its channel
 curl -LsSf https://raw.githubusercontent.com/JeffShih-wiwynn/KTVibes/dev/install.sh | bash -s -- --channel dev
 ```
 
-Run `ktvibes` to open the terminal menu. The menu starts `ktvibes.service` if needed, connects to an already running service, and opens Player once the server is ready. The Remote address appears above the version/update item. Open Player, Show Logs, Network Settings, Launch at Login, Detach and Quit are available from the menu.
+The installer uses CPU by default, or CUDA when `nvidia-smi` detects a usable NVIDIA GPU. On Intel GPU systems it asks whether to enable experimental XPU (default No, including noninteractive installations). Reinstalling preserves the saved choice. CPU mode does not install NVIDIA packages.
+
+Run `ktvibes` to open the terminal menu. The menu starts `ktvibes.service` if needed, connects to an already running service, and opens Player once the server is ready. The Remote address appears above the version/update item. Open Player, Show Logs, Network Settings, AI Acceleration, Launch at Login, Detach and Quit are available from the menu.
 
 - **Detach / Ctrl+C:** close the terminal menu and leave the server running.
 - **Quit:** stop the server and close the menu. The Launch at Login setting remains unchanged.
+- **AI Acceleration:** switch between CPU, detected NVIDIA CUDA, and detected Intel XPU (experimental). Apply stops the service, synchronizes backend-specific PyTorch packages, validates the backend, and restarts the service. A failed switch restores the previous packages and setting. Song/model files are retained. XPU validation runs a short Demucs inference and may download the model; Intel GPU compute drivers must already be installed.
 - **Launch at Login:** enable or disable the systemd user service for future logins. Login startup runs in the background without a terminal or browser.
 - **Version:** check for updates in the installed channel and confirm installation. Updating stops the service and hands control to an independent installer. Success restarts the service and TUI; failure leaves the service stopped and displays the error in the terminal.
 - **Show Logs:** view the service journal; left/right arrows scroll long messages horizontally. `q`, Esc or Ctrl+C returns to the menu.

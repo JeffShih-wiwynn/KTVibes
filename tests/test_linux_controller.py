@@ -66,7 +66,7 @@ def test_terminal_exit_only_stops_service_on_quit(config, monkeypatch, quit_serv
     monkeypatch.setattr(linux, 'systemctl', command)
     screen = Mock()
     screen.getmaxyx.return_value = (24, 90)
-    screen.getch.side_effect = [curses.KEY_DOWN] * 6 + [10] if quit_server else [3]
+    screen.getch.side_effect = [curses.KEY_DOWN] * 7 + [10] if quit_server else [3]
     linux.tui(screen)
     browser.assert_called_once_with('http://localhost:8765')
     if quit_server:

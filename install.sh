@@ -111,7 +111,7 @@ fi
 git -C "$app_dir" fetch origin "$target_ref"
 git -C "$app_dir" reset --hard FETCH_HEAD
 
-(cd "$app_dir" && uv sync --locked --no-dev)
+(cd "$app_dir" && uv run --no-project --python 3.12 python -m ktvibes.acceleration install)
 export KTVIBES_CACHE="$data_home/ktvibes/cache"
 (cd "$app_dir" && .venv/bin/python -m ktvibes.linux --install)
 
