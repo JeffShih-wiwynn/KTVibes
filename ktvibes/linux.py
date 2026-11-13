@@ -48,9 +48,11 @@ def quote_unit(value):
 
 
 def unit_path(value):
-    """Escape a filesystem path for systemd path-valued directives."""
-    escapes = {'\\': '\\\\', ' ': '\\x20', '\t': '\\x09', '\n': '\\x0a', '\r': '\\x0d', '"': '\\x22'}
-    return ''.join(escapes.get(char, '%%' if char == '%' else char) for char in str(value))
+    """WorkingDirectory accepts a literal path, with percent specifiers expanded."""
+    value = str(value)
+    if '\n' in value or '\r' in value:
+        raise ValueError('Systemd working directory cannot contain a line break')
+    return value.replace('%', '%%')
 
 
 def install():

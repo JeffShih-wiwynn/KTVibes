@@ -5,6 +5,7 @@ import pytest
 from ktvibes import linux
 
 
+
 @pytest.fixture
 def config(tmp_path, monkeypatch):
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
@@ -35,12 +36,33 @@ def test_apply_restores_previous_settings_when_restart_fails(config, monkeypatch
     assert command.call_count == 2
 
 
+def test_working_directory_preserves_spaces_and_escapes_specifiers(config, tmp_path, monkeypatch):
+    root = tmp_path / 'application with spaces 100%'
+    root.mkdir()
+    monkeypatch.setattr(linux, '__file__', str(root / 'ktvibes/linux.py'))
+    monkeypatch.setattr(linux, 'systemctl', Mock())
+    linux.install()
+    text = (config.parent / 'systemd/user/ktvibes.service').read_text()
+    line = next(line for line in text.splitlines() if line.startswith('WorkingDirectory='))
+    assert line == 'WorkingDirectory=' + str(root).replace('%', '%%')
+
+
+@pytest.mark.parametrize('value', ['/tmp/app\nother', '/tmp/app\rother'])
+def test_working_directory_rejects_line_breaks(value):
+    with pytest.raises(ValueError, match='line break'):
+        linux.unit_path(value)
+
+
 def test_apply_retains_new_settings_after_readiness(config, monkeypatch):
     monkeypatch.setattr(linux, 'systemctl', Mock())
     monkeypatch.setattr(linux, 'wait_ready', lambda: {'port': 9876})
     candidate = dict(linux.preferences(), port=9876)
     assert linux.apply(candidate)['port'] == 9876
     assert linux.preferences() == candidate
+
+
+def test_saved_network_settings_are_private(config):
+    linux.save(config / 'network.json', linux.preferences())
     assert (config / 'network.json').stat().st_mode & 0o077 == 0
 
 
