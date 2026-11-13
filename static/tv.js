@@ -301,6 +301,9 @@ function dial(digits){
  clearTimeout(dialTimer);dialTimer=setTimeout(()=>{$('cb-dial').hidden=true;showAttractDial('');},8000);  // a keypad left mid-number
 }
 function reserved(){$('cb-dial').hidden=true;showAttractDial('');}
+function timeReadings(rt,from,to){
+ for(const reading of rt.children){reading.dataset.from=from;reading.dataset.to=to;}
+}
 function placeLyrics(list){
  lyrics=list;firstLine=lyrics.findIndex(line=>line.text);$('lyrics').replaceChildren();
  slots=[];let slot=0;lyrics.forEach((line,i)=>{if(breakAfter(i-1))slot=0;slots[i]=slot;slot^=1;});
@@ -318,12 +321,13 @@ function placeLyrics(list){
     }
     rt.append(el('span',units[n][3]||'','latin'),el('span',units[n][5]||'','jyutping'),el('span',units[n][4]||'','hangul'));
     const kanaReading=el('span',units[n][6]||'','kana');
-    kanaReading.dataset.from=units[n][1];kanaReading.dataset.to=units[end-1][2];
     rt.append(kanaReading);
+    timeReadings(rt,units[n][1],units[end-1][2]);
     ruby.append(rt);p.append(ruby,trailing);n=end;continue;
    }
    const span=el('span',undefined,latin||hangul||jyutping||kana?'unit ruby':'unit');
    if(latin||hangul||jyutping||kana){const word=text.trimEnd(),ruby=el('ruby',word),rt=el('rt');rt.append(el('span',latin||'','latin'),el('span',jyutping||'','jyutping'),el('span',hangul||'','hangul'),el('span',kana||'','kana'));ruby.append(rt);span.append(ruby);p.append(span,text.slice(word.length));}else{span.textContent=text;p.append(span);}
+   const rt=span.querySelector('rt');if(rt)timeReadings(rt,units[n][1],units[n][2]);
    n++;
   }
   $('lyrics').append(p);
@@ -441,7 +445,7 @@ function frame(now){
    for(const n of echoing?[leadLine,index]:[index]){
     const units=lines[n]?.units,line=$('lyrics').children[n],spans=line?.querySelectorAll('.unit');
     if(units&&spans)units.forEach(([,from,to],i)=>spans[i]?.style.setProperty('--p',Math.max(0,Math.min(1,(time-from)/Math.max(.05,to-from)))));
-    line?.querySelectorAll('ruby.kana-group .kana').forEach(reading=>{
+    line?.querySelectorAll('rt>span').forEach(reading=>{
      const from=Number(reading.dataset.from),to=Number(reading.dataset.to);
      reading.style.setProperty('--p',Math.max(0,Math.min(1,(time-from)/Math.max(.05,to-from))));
     });

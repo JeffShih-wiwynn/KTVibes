@@ -255,3 +255,5 @@
 .tv[data-theme=classic] .cb-right{white-space:nowrap}
 .tv[data-theme=classic] .intro-foot{bottom:auto;top:calc(clamp(64px,6.5vh,72px) + 2*var(--u))}
 }
+
+.tv[data-theme=classic] #lyrics{--reading-highlight:#39cfff}
