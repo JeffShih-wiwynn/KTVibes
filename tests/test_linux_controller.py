@@ -1,9 +1,11 @@
 """Controller transactions without requiring a live systemd user manager."""
 import json
+import os
 from unittest.mock import Mock
 import pytest
 from ktvibes import linux
 
+requires_curses = pytest.mark.skipif(os.name == 'nt', reason='Linux TUI requires POSIX curses')
 
 
 @pytest.fixture
@@ -61,6 +63,7 @@ def test_apply_retains_new_settings_after_readiness(config, monkeypatch):
     assert linux.preferences() == candidate
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX file permission bits do not describe Windows ACLs')
 def test_saved_network_settings_are_private(config):
     linux.save(config / 'network.json', linux.preferences())
     assert (config / 'network.json').stat().st_mode & 0o077 == 0
@@ -75,6 +78,7 @@ def test_status_rejects_other_server_instance(config, monkeypatch):
 
 
 @pytest.mark.parametrize('quit_server', [False, True])
+@requires_curses
 def test_terminal_exit_only_stops_service_on_quit(config, monkeypatch, quit_server):
     import curses
     for name in ('curs_set', 'raw'):
@@ -97,6 +101,7 @@ def test_terminal_exit_only_stops_service_on_quit(config, monkeypatch, quit_serv
         command.assert_not_called()
 
 
+@requires_curses
 def test_q_returns_from_network_and_network_picker(config, monkeypatch):
     import curses
     for name in ('curs_set', 'raw'):
@@ -115,6 +120,7 @@ def test_q_returns_from_network_and_network_picker(config, monkeypatch):
     assert screen.getch.call_count == 8
 
 
+@requires_curses
 def test_q_is_inserted_while_editing_a_text_field(config, monkeypatch):
     import curses
     for name in ('curs_set', 'raw'):
@@ -133,6 +139,7 @@ def test_q_is_inserted_while_editing_a_text_field(config, monkeypatch):
     assert screen.get_wch.call_count == 2
 
 
+@requires_curses
 def test_logs_horizontal_scroll_and_bounds(config, monkeypatch):
     import curses
     import subprocess
@@ -155,6 +162,7 @@ def test_logs_horizontal_scroll_and_bounds(config, monkeypatch):
 
 
 @pytest.mark.parametrize('target,confirm', [(None, False), ('dev · abc12345', False), ('dev · abc12345', True)])
+@requires_curses
 def test_version_checks_and_confirmation(config, monkeypatch, target, confirm):
     import curses
     from ktvibes import linux_updates
