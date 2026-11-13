@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # KTVibes Linux installer. macOS is distributed as a DMG.
+[ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -euo pipefail
 
 channel=stable
@@ -39,7 +40,7 @@ if [[ "$(uname -s)" != Linux ]]; then
   exit 1
 fi
 
-for tool in git curl ffmpeg node; do
+for tool in git curl ffmpeg node systemctl journalctl ip; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "Missing required command: $tool" >&2
     echo "Install it with your distribution's package manager, then run this installer again." >&2
@@ -77,6 +78,11 @@ else
   echo "Installing stable release $release_tag."
 fi
 
+if ! systemctl --user show-environment >/dev/null 2>&1; then
+  echo "A running systemd user session is required. Use uv run ktvibes for foreground operation." >&2
+  exit 1
+fi
+
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
 app_dir="$data_home/ktvibes"
@@ -87,7 +93,6 @@ if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$PATH"
 fi
-uv_bin="$(command -v uv)"
 
 mkdir -p "$data_home" "$cache_home/ktvibes" "$bin_dir"
 if [[ -e "$app_dir" && ! -d "$app_dir/.git" ]]; then
@@ -107,6 +112,8 @@ git -C "$app_dir" fetch origin "$target_ref"
 git -C "$app_dir" reset --hard FETCH_HEAD
 
 (cd "$app_dir" && uv sync --locked --no-dev)
+export KTVIBES_CACHE="$data_home/ktvibes/cache"
+(cd "$app_dir" && .venv/bin/python -m ktvibes.linux --install)
 
 cat > "$bin_dir/ktvibes" <<LAUNCHER
 #!/usr/bin/env bash
@@ -114,13 +121,18 @@ set -euo pipefail
 export KTVIBES_CACHE="\${XDG_DATA_HOME:-\$HOME/.local/share}/ktvibes/cache"
 export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}"
 cd "$app_dir"
-exec "$uv_bin" run --frozen --no-sync --no-dev ktvibes "\$@"
+exec "$app_dir/.venv/bin/python" -m ktvibes.linux "\$@"
 LAUNCHER
 chmod 755 "$bin_dir/ktvibes"
 
+installation_config="${XDG_CONFIG_HOME:-$HOME/.config}/ktvibes"
+mkdir -p "$installation_config"
+printf '{"channel":"%s"}\n' "$channel" > "$installation_config/installation.json.tmp"
+mv "$installation_config/installation.json.tmp" "$installation_config/installation.json"
+
 echo
 echo "KTVibes installed. Run: $bin_dir/ktvibes"
-echo "Then open http://localhost:8765 on the TV computer."
+echo "The TUI starts the service and opens Player when ready. Ctrl+C detaches; Quit stops the server."
 case ":${PATH}:" in
   *":$bin_dir:"*) ;;
   *) echo "Add $bin_dir to PATH to run 'ktvibes' directly." ;;
