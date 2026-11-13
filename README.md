@@ -50,19 +50,30 @@ Settings are stored in `~/Library/Application Support/KTVibes/network.json` on m
 
 ### Linux
 
-The installer requires Git, FFmpeg and Node.js 22 or later. It installs uv if needed, installs KTVibes under `~/.local/share/ktvibes`, and adds a `ktvibes` command under `~/.local/bin`. Application data, including the song library and queue, is kept under the XDG data directory; model downloads use the XDG cache directory. XDG directory environment variables are respected. The installer only updates its own installation and leaves `~/KTVibes` source checkouts alone:
+The Linux TUI requires a systemd user session, Git, FFmpeg, Node.js 22 or later, and the `ip` command (iproute2). It installs uv if needed, installs KTVibes under `~/.local/share/ktvibes`, and adds a `ktvibes` command under `~/.local/bin`. Application data, including the song library and queue, is kept under the XDG data directory; model downloads use the XDG cache directory. XDG directory environment variables are respected. The installer only updates its own installation and leaves `~/KTVibes` source checkouts alone:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/JeffShih-wiwynn/KTVibes/dev/install.sh | bash
 ```
 
-The installer defaults to the latest stable GitHub Release. To install the development branch instead, pass the channel option:
+The installer defaults to the latest stable GitHub Release and saves its channel in `${XDG_CONFIG_HOME:-~/.config}/ktvibes/installation.json`. To install the development branch instead, pass the channel option:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/JeffShih-wiwynn/KTVibes/dev/install.sh | bash -s -- --channel dev
 ```
 
-If you prefer to install from source:
+Run `ktvibes` to open the terminal menu. The menu starts `ktvibes.service` if needed, connects to an already running service, and opens Player once the server is ready. The Remote address appears above the version/update item. Open Player, Show Logs, Network Settings, Launch at Login, Detach and Quit are available from the menu.
+
+- **Detach / Ctrl+C:** close the terminal menu and leave the server running.
+- **Quit:** stop the server and close the menu. The Launch at Login setting remains unchanged.
+- **Launch at Login:** enable or disable the systemd user service for future logins. Login startup runs in the background without a terminal or browser.
+- **Version:** check for updates in the installed channel and confirm installation. Updating stops the service and hands control to an independent installer. Success restarts the service and TUI; failure leaves the service stopped and displays the error in the terminal.
+- **Show Logs:** view the service journal; left/right arrows scroll long messages horizontally. `q`, Esc or Ctrl+C returns to the menu.
+- **Network Settings:** select an IPv4 adapter, edit the port, or enable an external HTTPS address with a PIN. Apply restarts the service without opening another browser; failed settings are restored. Reset edits the form; Apply saves it.
+
+Settings and private runtime credentials are stored under `${XDG_CONFIG_HOME:-~/.config}/ktvibes/`. The unit is installed under the XDG config directory's `systemd/user/` folder and is initially disabled for login startup. No root privileges or lingering are configured. You can also use `systemctl --user start|stop|status ktvibes` and `journalctl --user -u ktvibes` directly. SSH/headless sessions can use these commands; automatic browser opening requires a desktop browser.
+
+If you prefer to install from source (including on non-systemd systems):
 
 ```bash
 git clone --branch dev https://github.com/JeffShih-wiwynn/KTVibes.git
@@ -79,7 +90,7 @@ For module responsibilities and dependency boundaries, see [Code structure](docs
 - When a newer stable release is available, the Remote shows an update icon. Open it to see the version and the GitHub Release page; downloading and installing remain manual.
 - **Windows:** Download and run the newer installer. It updates the application in the selected folder and keeps `cache/`.
 - **macOS:** Replace KTVibes in Applications with the newer app. Your songs, lyrics, queue and models remain in Application Support.
-- **Linux:** Rerun the install command to update the managed installation. Your songs, lyrics and queue remain in the XDG data directory.
+- **Linux:** Stop the service with Quit or `systemctl --user stop ktvibes`, then rerun the install command to update the managed installation. Your songs, lyrics and queue remain in the XDG data directory.
 
 ## Upstream and license
 
