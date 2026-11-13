@@ -25,9 +25,9 @@ uv run --locked pytest
 
 The default pytest collection runs `tests/`. Browser tests are selected explicitly.
 
-## Remote browser tests
+## Remote and Player browser tests
 
-These tests load the production Remote HTML, CSS and JavaScript from a local static
+These tests load the production Remote and Player HTML, CSS and JavaScript from a local static
 server. HTTP and WebSocket responses use deterministic fixtures, so YouTube,
 LRCLIB, FFmpeg, PyTorch and model downloads are not required.
 
@@ -50,6 +50,8 @@ seeking with delayed playback updates, queue ordering and actions, duplicate que
 entries, Recent swipes, lyrics selection, search cooldowns, lyric status and the
 960px layout breakpoint. Mouse input exercises dragging in both profiles;
 Chromium touch input additionally checks native scrolling and gesture arbitration.
+Player layout checks cover five queued songs, long titles, two-line lyrics and the
+between-song card at 1080p and 720p, including the Classic reservation board.
 
 The `Remote UI tests` workflow runs on branch pushes, pull requests and manual
 dispatch. Failed runs upload screenshots and Playwright traces from `test-results/`.
