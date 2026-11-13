@@ -12,8 +12,15 @@ permissions:
 
 jobs:
   test:
-    # arm64 selects the project's macOS CPU PyTorch wheels instead of the CUDA builds.
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +31,16 @@ jobs:
           enable-cache: true
 
       - name: Install locked dependencies
-        run: uv sync --locked
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            uv sync --locked --extra cpu
+          elif [[ "$RUNNER_OS" == Windows ]]; then
+            # Production Windows installs use CUDA; CI exercises CPU behavior.
+            uv sync --locked --no-install-package torch --no-install-package torchaudio
+            uv pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+          else
+            uv sync --locked
+          fi
 
       - name: Run tests
-        run: uv run --locked pytest
+        run: uv run --no-sync pytest

@@ -27,6 +27,7 @@ def test_saved_branch_and_legacy_tag_detection(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize('branch', [None, 'dev', 'feature/new-ui', 'stable', "feature/o'connor"])
 @pytest.mark.parametrize('failure', [False, True])
+@pytest.mark.skipif(os.name == 'nt', reason='Linux updater executes POSIX shell scripts and executable permissions')
 def test_handoff_stops_installs_and_only_restarts_on_success(tmp_path, monkeypatch, branch, failure):
     root = tmp_path / 'application with spaces'
     root.mkdir()
