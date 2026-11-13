@@ -1,4 +1,4 @@
-"""Channel-aware updates, handed to bash after the terminal UI exits."""
+"""Branch-aware updates, handed to bash after the terminal UI exits."""
 import json
 import os
 from pathlib import Path
@@ -16,31 +16,48 @@ class UpdateRequested(Exception):
         self.helper = helper
 
 
-def channel():
+def validate_branch(value):
+    if value is None:
+        return
+    if not isinstance(value, str) or not value or value.startswith('-'):
+        raise ValueError('Invalid installation branch')
+    result = subprocess.run(['git', 'check-ref-format', 'refs/heads/' + value],
+                            capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise ValueError('Invalid installation branch')
+
+
+def branch():
     directory = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'ktvibes'
     path = directory / 'installation.json'
     if path.exists():
-        value = json.loads(path.read_text()).get('channel')
-        if value not in ('stable', 'dev'):
-            raise RuntimeError('Invalid installation channel. Rerun the installer with --channel stable or dev.')
+        saved = json.loads(path.read_text())
+        if 'branch' in saved:
+            value = saved['branch']
+        elif saved.get('channel') in ('stable', 'dev'):
+            value = 'dev' if saved['channel'] == 'dev' else None
+        else:
+            raise RuntimeError('Invalid installation settings. Rerun the installer.')
+        validate_branch(value)
         return value
-    # Historical installers tracked dev; exact numeric release tags identify stable installs.
+    # Older managed installs without metadata tracked dev unless at a release tag.
     result = subprocess.run(['git', 'describe', '--tags', '--exact-match', 'HEAD'], cwd=ROOT,
                             capture_output=True, text=True, timeout=10)
     from .updates import version_key
-    return 'stable' if result.returncode == 0 and version_key(result.stdout.strip()) else 'dev'
+    return None if result.returncode == 0 and version_key(result.stdout.strip()) else 'dev'
 
 
-def available(selected_channel):
-    if selected_channel == 'dev':
+def available(selected_branch):
+    validate_branch(selected_branch)
+    if selected_branch is not None:
         result = subprocess.run(['git', 'ls-remote', 'https://github.com/JeffShih-wiwynn/KTVibes.git',
-                                 'refs/heads/dev'], capture_output=True, text=True, timeout=15, check=True)
+                                 'refs/heads/' + selected_branch], capture_output=True, text=True, timeout=15, check=True)
         remote = result.stdout.split()
         if not remote:
-            raise RuntimeError('Could not find the dev branch.')
+            raise RuntimeError('Could not find branch ' + selected_branch)
         local = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True,
                                text=True, timeout=10, check=True).stdout.strip()
-        return 'dev · ' + remote[0][:8] if remote[0] != local else None
+        return selected_branch + ' · ' + remote[0][:8] if remote[0] != local else None
     from .updates import GITHUB_RELEASE_API, newer_release, project_version
     request = Request(GITHUB_RELEASE_API, headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'KTVibes'})
     with urlopen(request, timeout=10) as response:
@@ -49,9 +66,9 @@ def available(selected_channel):
     return update['version'] if update else None
 
 
-def prepare_handoff(selected_channel):
-    if selected_channel not in ('stable', 'dev'):
-        raise ValueError('Invalid update channel')
+def prepare_handoff(selected_branch):
+    validate_branch(selected_branch)
+    arguments = '' if selected_branch is None else ' --branch ' + shlex.quote(selected_branch)
     directory = Path(tempfile.mkdtemp(prefix='ktvibes-update-'))
     try:
         # Snapshot both scripts: git reset during installation may replace their originals.
@@ -65,7 +82,7 @@ if ! systemctl --user stop ktvibes.service; then
   echo "Could not stop KTVibes. Update cancelled." >&2
   exit 1
 fi
-if ! bash {shlex.quote(str(installer))} --channel {selected_channel}; then
+if ! bash {shlex.quote(str(installer))}{arguments}; then
   echo "Update failed. KTVibes remains stopped. Rerun the installer to retry." >&2
   exit 1
 fi

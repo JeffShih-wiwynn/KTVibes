@@ -3,36 +3,39 @@
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -euo pipefail
 
-channel=stable
+branch=''
 while (($#)); do
   case "$1" in
-    --channel)
+    --branch)
       if (($# < 2)); then
-        echo "Usage: install.sh [--channel stable|dev]" >&2
+        echo "Usage: install.sh [--branch BRANCH_NAME]" >&2
         exit 2
       fi
-      channel="$2"
+      branch="${2:?Branch name must not be empty}"
       shift 2
       ;;
-    --channel=*)
-      channel="${1#*=}"
+    --branch=*)
+      branch="${1#*=}"
+      [[ -n "$branch" ]] || { echo "Branch name must not be empty" >&2; exit 2; }
       shift
       ;;
     -h|--help)
-      echo "Usage: install.sh [--channel stable|dev]"
+      echo "Usage: install.sh [--branch BRANCH_NAME]"
       exit 0
       ;;
     *)
       echo "Unknown option: $1" >&2
-      echo "Usage: install.sh [--channel stable|dev]" >&2
+      echo "Usage: install.sh [--branch BRANCH_NAME]" >&2
       exit 2
       ;;
   esac
 done
 
-if [[ "$channel" != stable && "$channel" != dev ]]; then
-  echo "Invalid channel '$channel'. Choose 'stable' or 'dev'." >&2
-  exit 2
+if [[ -n "$branch" ]]; then
+  if [[ "$branch" == -* ]] || ! git check-ref-format "refs/heads/$branch" >/dev/null 2>&1; then
+    echo "Invalid branch name: $branch" >&2
+    exit 2
+  fi
 fi
 
 if [[ "$(uname -s)" != Linux ]]; then
@@ -52,9 +55,9 @@ if (( $(node -p 'process.versions.node.split(".")[0]') < 22 )); then
   exit 1
 fi
 
-if [[ "$channel" == dev ]]; then
-  target_ref=refs/heads/dev
-  echo "Installing the dev channel."
+if [[ -n "$branch" ]]; then
+  target_ref="refs/heads/$branch"
+  echo "Installing branch $branch."
 else
   release_api="https://api.github.com/repos/JeffShih-wiwynn/KTVibes/releases/latest"
   if ! release_tag="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$release_api" | node -e '
@@ -127,7 +130,7 @@ chmod 755 "$bin_dir/ktvibes"
 
 installation_config="${XDG_CONFIG_HOME:-$HOME/.config}/ktvibes"
 mkdir -p "$installation_config"
-printf '{"channel":"%s"}\n' "$channel" > "$installation_config/installation.json.tmp"
+node -e 'console.log(JSON.stringify({branch: process.argv[1] || null}))' "$branch" > "$installation_config/installation.json.tmp"
 mv "$installation_config/installation.json.tmp" "$installation_config/installation.json"
 
 echo

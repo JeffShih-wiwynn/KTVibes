@@ -142,8 +142,8 @@ def tui(screen):
     import curses
     from .updates import project_version
     local_version = project_version()
-    from .linux_updates import channel
-    installed_channel = channel()
+    from .linux_updates import branch
+    installed_branch = branch()
     curses.curs_set(0)
     curses.raw()  # Ctrl+C is a navigation key, not a server signal.
     colors = curses.has_colors()
@@ -368,8 +368,8 @@ def tui(screen):
         conflict = (config_dir() / 'port-conflict').exists()
         version = 'Port conflict' if conflict else 'Version ' + (config['version'] if config else local_version)
         if not conflict:
-            version += ' · ' + installed_channel
-        if installed_channel == 'stable' and config and config.get('update'):
+            version += ' · ' + (installed_branch or 'stable')
+        if installed_branch is None and config and config.get('update'):
             version += ' → ' + config['update']['version']
         rows = [row('REMOTE ADDRESS', 'section', False),
                 row(config['remote_url'] if config else 'Unavailable', 'info', False),
@@ -394,14 +394,14 @@ def tui(screen):
                     network()
                 else:
                     from .linux_updates import available, UpdateRequested, prepare_handoff
-                    selected_channel = installed_channel
+                    selected_branch = installed_branch
                     draw('Updates', [row('Checking for updates…', 'status', False)])
-                    target = available(selected_channel)
+                    target = available(selected_branch)
                     if not target:
-                        message = '✓ Already up to date (' + selected_channel + ').'
+                        message = '✓ Already up to date (' + (selected_branch or 'stable') + ').'
                         message_kind = 'success'
                     elif choose('Update to ' + target + '? Service will restart.', ['Cancel', 'Update']) == 1:
-                        helper = prepare_handoff(selected_channel)
+                        helper = prepare_handoff(selected_branch)
                         raise UpdateRequested(helper)
             elif index == 1:
                 if config:
