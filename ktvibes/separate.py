@@ -1,6 +1,7 @@
 """One lazily loaded model on CUDA, Apple MPS, or CPU. Run: uv run python -m ktvibes.separate AUDIO OUTPUT_DIR"""
 from pathlib import Path
 import sys
+import os
 import threading
 import time
 import torch
@@ -13,6 +14,11 @@ _model = None
 _lock = threading.Lock()
 
 def _device() -> str:
+    requested = os.environ.get('KTVIBES_DEVICE')
+    if requested in ('cpu', 'cuda', 'xpu'):
+        if requested != 'cpu' and not getattr(torch, requested).is_available():
+            raise RuntimeError(f'{requested.upper()} is unavailable; select CPU in AI Acceleration.')
+        return requested
     if torch.cuda.is_available():
         return "cuda"
     if torch.backends.mps.is_available():
