@@ -4,6 +4,7 @@ cache/
 __pycache__/
 .pytest_cache/
 *.pyc
+.DS_Store
 artifacts/
 /dist/
 /test-results/
