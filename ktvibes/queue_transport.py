@@ -37,5 +37,7 @@ def disconnect(state, ws):
     state.clients.pop(ws, None)
     state.lyrics_sent.pop(ws, None)
     if state.player is ws:
+        state.intro_pending = None
+        state.next_pending = False
         state.player = None
         state.audio = False

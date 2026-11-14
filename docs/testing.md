@@ -55,6 +55,10 @@ between-song card at 1080p and 720p, including the Classic reservation board.
 Remote layout checks use long song titles and requester names at 360, 959, 960 and
 1440 pixels, and verify that search actions, Settings and Lyrics panels stay within
 their columns or viewport.
+Section skip checks cover combined Skip intro / Next song button states in both themes, guarded requests,
+lyric timing offsets, rendered audio fade samples, fade cancellation, and Player
+completion after a manual Next song fade. These join the existing Python and browser
+CI collections automatically.
 Recovery checks exercise the real WebSocket reconnect timer for both Remote and
 Player, restore the latest queue after a disconnect, and verify that a changed
 server build reloads the page once without sending skip or queue removal commands.

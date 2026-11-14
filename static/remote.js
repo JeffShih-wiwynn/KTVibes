@@ -78,6 +78,12 @@ function showPosition(){
  let position=Math.min(state.position+live,state.current?.duration||0);
  if(seekDrag?.mode==='horizontal')position=seekDrag.preview;
  else if(seekPending){if(state.current?.key!==seekPending.key||Date.now()>seekPending.expires)seekPending=null;else position=seekPending.position;}
+ const section=$('skip'),points=state.sections;
+ const intro=!!(points&&position<points.intro),label=intro?'Skip intro':'Next song';
+ section.querySelector('span').textContent=label;section.setAttribute('aria-label',label);section.title=label;section.dataset.kind=intro?'intro':'next';
+ section.querySelector('path').setAttribute('d',intro?'m4 6 7 6-7 6M12 6l7 6-7 6':'m4 6 7 6-7 6M12 6l7 6-7 6M21 6v12');
+ const waiting=(state.transition_until||0)>(state.server_time||0)+(Date.now()/1000-state.received);
+ section.disabled=!state.current||waiting||!!state.intro_pending||!!state.next_pending||!state.player_audio;
  const fraction=state.current?.duration?position/state.current.duration:0;
  for(const id of ['hero-bar','dock-bar'])$(id).style.setProperty('--p',fraction);
  $('hero-bar').classList.toggle('scrubbing',seekDrag?.mode==='horizontal');
@@ -111,7 +117,7 @@ $('hero-bar').onkeydown=e=>{const step={ArrowLeft:-5,ArrowRight:5}[e.key];if(ste
 for(const [id,delta] of [['hero-offset-earlier',-.5],['hero-offset-later',.5]])$(id).onclick=()=>{if(state?.current)send({action:'offset',delta});};
 const playPause=()=>{haptic(8);send({action:state?.playing?'pause':'play'});};
 $('hero-play').onclick=$('dock-play').onclick=playPause;
-$('skip').onclick=()=>{haptic(12);send({action:'skip'});};
+$('skip').onclick=()=>{if(state?.current){haptic(12);send({action:'skip_'+$('skip').dataset.kind,key:state.current.key});$('skip').disabled=true;}};
 // The dock hides while the card is on screen; when the card leaves, the dock rises and its art drops in.
 let heroVisible=false;
 new IntersectionObserver(([entry])=>{
@@ -140,7 +146,7 @@ for(const button of document.querySelectorAll('.react'))button.onclick=()=>{
 };
 // Controls sheet: mix, key, speed and TV display.
 function showControls(before){
- for(const id of ['skip','key-down','key-up'])$(id).disabled=!state.current;
+ for(const id of ['key-down','key-up'])$(id).disabled=!state.current;
  for(const [id,value] of [['vocal',state.vocal],['music',state.music],['speed',state.speed],['lyric-scale',state.lyric_scale]]){
   if(document.activeElement!==$(id)&&!gliding)$(id).value=value;$(`${id}-value`).textContent=`${Math.round(value*100)}%`;
  }

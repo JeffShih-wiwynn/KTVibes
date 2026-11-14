@@ -1,3 +1,4 @@
+import {createSectionFade} from './section-fade.js';
 import {createScreenWakeLock} from './wake-lock.js';
 import {createInvite} from './tv-invite.js';
 import {createBrandRotation} from './tv-brand.js';
@@ -6,6 +7,7 @@ import {$,el,connect,api,clock,throttle,prepLabel,syncRanges,REDUCED,thumbnail,n
 import {renderRequester,requesterBadge} from './requester.js';
 const music=$('instrumental'),voice=$('vocals'),video=$('backdrop');
 video.muted=true;
+let sectionFade;
 let breather=0,guide,state,lyrics=[],firstLine=-1,stemGain=1,currentKey=null,context,musicGain,voiceGain,shifter,enabled=false,activeLine=-1,starting=false,generation=0,lastReport=0,seekTo=null,serverSkew=0,buffering=false,videoStarting=false,lyricsPositioned=false,lastSeek=0,shownPair='',fitKey='';
 const rotateBrand = createBrandRotation();
 const updateScreenWakeLock = createScreenWakeLock();
@@ -45,14 +47,20 @@ const send = connect('tv', {
   showConnection(true);
   restoring = true;
   send({action: 'audio', value: enabled});
-  if (currentKey && finishedKey === currentKey) send({action: 'ended', key: currentKey});
+  if (currentKey && finishedKey === currentKey) send({action:state?.next_pending?'skip_complete':'ended',key:currentKey});
  },
  onEvent(event) {
-  if (event.type === 'react') cheer(event.value);
+  if(event.type==='section_skip'&&event.key===currentKey)sectionFade?.run(event.kind,()=>{
+   if(event.key!==currentKey)return;
+   if(music.readyState){music.currentTime=voice.currentTime=event.position;if(video.readyState)video.currentTime=event.position;}else seekTo=event.position;
+   lyricsPositioned=false;
+   send({action:'intro_seek',key:currentKey});
+  },()=>{if(event.key===currentKey)send({action:'intro_complete',key:currentKey});});
+  else if (event.type === 'react') cheer(event.value);
   else if (event.type === 'dial') dial(event.digits);
   else if (event.type === 'reserved') reserved(event.number);
  },
- onClose: () => showConnection(false)
+ onClose: () => {sectionFade?.reset();showConnection(false);}
 });
 function saved(){try{return JSON.parse(localStorage.getItem(SETTINGS))||{};}catch{return {};}}
 function remember(s){try{localStorage.setItem(SETTINGS,JSON.stringify(Object.fromEntries(SETTING_KEYS.map(k=>[k,s[k]]))));}catch{}}
@@ -74,6 +82,7 @@ async function refreshRemoteAddress(){
 refreshRemoteAddress();setInterval(refreshRemoteAddress,5000);
 function render(next){
  updateScreenWakeLock(next);
+ if(state?.playing&&!next.playing)sectionFade?.reset();
  state=next;if(restoring){restoring=false;restore(state);}else remember(state);if(state.guide!==guide){if(guide!==undefined)showGuideBadge(state.guide);guide=state.guide;document.body.dataset.guide=guide;}showChanges(state);showQueueChange(state);document.body.style.setProperty('--lyric-scale',state.lyric_scale??1.5);document.body.dataset.video=state.video_mode||'show';document.body.dataset.lyrics=state.lyric_mode||'two';document.body.dataset.theme=state.theme||'default';for(const b of document.querySelectorAll('[data-theme-pick]'))b.setAttribute('aria-pressed',b.dataset.themePick===document.body.dataset.theme);showClassicBar(state);showSpecs(state);showBoot();roomClock();serverSkew=state.server_time-Date.now()/1000;$('vocal').value=state.vocal;if(document.activeElement!==$('tv-music'))$('tv-music').value=state.music??1;$('tv-play').classList.toggle('paused',!state.playing);$('tv-play').setAttribute('aria-label',state.playing?'Pause':'Play');$('tv-guide').textContent=GUIDE_BADGES[state.guide]?.[0]??'Aa';$('tv-guide').hidden=(state.guides||[]).length<2;syncRanges();applyGain();
  const queued=state.upcoming.filter(i=>i.status!=='error');
  const classic=state.theme==='classic';
@@ -96,6 +105,7 @@ function render(next){
  $('tv-bottom').hidden=!state.current;
  if((state.current?.key||null)!==currentKey){
   endScore();  // skipped: the score stays through the breather
+  sectionFade?.reset();
   generation++;music.pause();voice.pause();video.pause();starting=false;buffering=false;videoStarting=false;currentKey=state.current?.key||null;activeLine=-1;relayout();lastSeek=state.seek_id;$('lyrics').replaceChildren();$('lyrics').scrollTo({top:0,behavior:'instant'});error('');
   if(state.current){
    const item=state.current;
@@ -113,6 +123,7 @@ function render(next){
  const nextFit=`${state.lyric_mode}|${state.lyric_scale}|${state.guide}`;
  if(nextFit!==fitKey){fitKey=nextFit;relayout();}
  if(state.current&&state.seek_id!==lastSeek){
+  sectionFade?.reset();
   lastSeek=state.seek_id;
   if(music.readyState&&seekTo===null){music.currentTime=voice.currentTime=state.position;if(state.current.video&&video.readyState)video.currentTime=state.position;}else seekTo=state.position;
   lyricsPositioned=false;
@@ -349,6 +360,7 @@ $('enable-button').onclick=async()=>{
    // Both stems run through one pitch shifter for key changes; without worklets, play at the original key.
    let out=context.destination;
    try{await context.audioWorklet.addModule('/static/pitch.js');shifter=new AudioWorkletNode(context,'pitch-shifter',{outputChannelCount:[2]});shifter.connect(out);out=shifter;}catch(e){console.warn('Key change unavailable',e);}
+   sectionFade=createSectionFade(context,out,()=>{finishedKey=currentKey;music.pause();voice.pause();video.pause();send({action:'skip_complete',key:currentKey});},video);out=sectionFade.gain;
    context.createMediaElementSource(music).connect(musicGain).connect(out);context.createMediaElementSource(voice).connect(voiceGain).connect(out);applyGain();
   }
   await context.resume();enabled=true;send({action:'audio',value:true});$('enable').hidden=true;$('audio-error').textContent='';
@@ -362,7 +374,7 @@ $('vocal').oninput=()=>sendVocal(Number($('vocal').value));
 const sendMusic=throttle(value=>send({action:'music',value}));
 $('tv-music').oninput=()=>sendMusic(Number($('tv-music').value));
 $('tv-play').onclick=()=>send({action:state?.playing?'pause':'play'});
-$('tv-skip').onclick=()=>send({action:'skip'});
+$('tv-skip').onclick=()=>{if(currentKey)send({action:'skip_next',key:currentKey});};
 $('tv-guide').onclick=()=>send({action:'guide',value:'cycle'});
 music.onwaiting=()=>{buffering=true;voice.pause();video.pause();};
 music.onplaying=()=>{buffering=false;if(enabled&&state?.playing&&currentKey){voice.currentTime=music.currentTime;voice.play().catch(()=>error('Vocals could not resume. Pause and play to retry.'));}};

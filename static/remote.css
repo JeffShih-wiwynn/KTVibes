@@ -366,3 +366,15 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 .lyric-option .lyric-card-preview{position:relative;box-sizing:border-box}
 .lyric-option .lyric-preview-outgoing{position:absolute;inset:0 auto auto 0;width:100%;display:grid;gap:4px;pointer-events:none}
 @media(prefers-reduced-motion:reduce){.lyric-option,.lyric-format,.lyric-card-actions button{transition:none}}
+
+#skip{flex:none;white-space:nowrap}#skip:disabled{opacity:.4;cursor:default}
+
+.hero{container-type:inline-size}
+.hero-section svg{flex:none}
+@container (max-width:400px){
+ .hero-utility :is(.hero-section,.hero-lyrics,.hero-settings){width:44px;padding:0;justify-content:center;gap:0}
+ .hero-utility :is(.hero-section,.hero-lyrics,.hero-settings) span{display:none}
+ .hero-utility .spacer{display:none}
+}
+
+@container (max-width:400px){.hero-playback #skip{width:44px;padding:0;justify-content:center;gap:0}.hero-playback #skip span{display:none}}

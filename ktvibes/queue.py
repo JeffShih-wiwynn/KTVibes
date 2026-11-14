@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 from . import songbook
+from .sections import boundaries
 
 DISPLAY = {"video_mode": ("show", "blur", "hide"), "lyric_mode": ("two", "scroll", "off"), "theme": ("default", "classic")}
 def following(options, current):
@@ -50,6 +51,8 @@ class State:
         self.room_ends = None  # unix time a Classic room's singing time runs out
         self.speed = 1.0  # playback tempo, 0.5-1.5; pitch is kept
         self.key = 0  # pitch shift in semitones, -6..+6
+        self.intro_pending = None
+        self.next_pending = False
         self.seek_id = 0
         self.position = 0.0
         self.transition_until = 0.0
@@ -82,7 +85,7 @@ class State:
                 "offset": self.offset, "vocal": self.vocal, "music": self.music, "guide": self.guide, "guides": self.guides(), "lyric_scale": self.lyric_scale, "video_mode": self.video_mode, "lyric_mode": self.lyric_mode, "theme": self.theme, "room_ends": self.room_ends, "time_up": self.time_up(), "speed": self.speed, "key": self.key, "seek_id": self.seek_id, "position": self.position,
                 "transition_until": self.transition_until, "server_time": time.time(),
                 "player_connected": self.player is not None, "player_audio": self.player is not None and self.audio,
-                "revision": self.revision, "build": self.build}
+                "revision": self.revision, "build": self.build, "sections": boundaries(self.current, self.offset), "next_pending": self.next_pending, "intro_pending": self.intro_pending is not None}
 
     def restore(self, path: Path, seed=lambda: {}):
         queue_storage.restore(self, path, seed, DISPLAY["theme"])
@@ -104,6 +107,8 @@ class State:
         return self.cache_locks.setdefault(video_id, asyncio.Lock())
 
     def advance(self, scored=False):
+        self.intro_pending = None
+        self.next_pending = False
         self.current = None
         self.position = 0
         self.offset = 0
@@ -226,6 +231,46 @@ class State:
         if action in ("ended", "progress"):
             if sender is not self.player or not self.current or message.get("key") != self.current["key"]:
                 return
+        if action == "intro_seek":
+            if sender is not self.player or not self.current or message.get("key") != self.current["key"] or self.intro_pending is None:
+                return
+            # The Player seeks while fully faded out, then acknowledges that position.
+            self.position = self.intro_pending
+            await self.broadcast()
+            return
+        if action in ("intro_complete", "skip_complete"):
+            if sender is not self.player or not self.current or message.get("key") != self.current["key"]:
+                return
+            if action == "intro_complete":
+                self.intro_pending = None
+            elif self.next_pending:
+                self.advance(scored=False)
+            else:
+                return
+            await self.broadcast()
+            return
+        if action in ("skip_intro", "skip_next"):
+            if time.time() < self.transition_until:
+                return
+            if not self.current or message.get("key") != self.current["key"] or self.player is None:
+                return
+            song_key = self.current["key"]
+            points = boundaries(self.current, self.offset)
+            if self.intro_pending is not None or self.next_pending:
+                return
+            if action == "skip_intro":
+                if not points or not self.position < points["intro"]:
+                    return
+                self.intro_pending = points["intro"]
+                await self.broadcast()
+            else:
+                self.next_pending = True
+                await self.broadcast()
+            if not self.current or self.current["key"] != song_key:
+                return
+            await self.send(self.player, {"type": "section_skip", "key": song_key,
+                                          "kind": action.removeprefix("skip_"), **({"position": points["intro"]} if action == "skip_intro" else {})})
+            return
         if action == "react":
             # A cheer goes straight to the TV and changes nothing, so there is nothing to save or broadcast.
             if message.get("value") not in REACTIONS:
@@ -261,6 +306,8 @@ class State:
         if action == "play":
             self.playing = True
         elif action == "pause":
+            self.intro_pending = None
+            self.next_pending = False
             self.playing = False
         elif action == "skip" or action == "ended":
             self.advance(scored=action == "ended")
@@ -274,6 +321,8 @@ class State:
             self.offset = max(-30, min(30, self.offset + number(message.get("delta", 0))))
             await self.remember_offset()
         elif action == "seek":
+            self.intro_pending = None
+            self.next_pending = False
             if not self.current:
                 raise ValueError("Nothing is playing")
             self.position = max(0, min(number(message["position"]), self.current["duration"]))
