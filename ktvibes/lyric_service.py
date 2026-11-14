@@ -199,6 +199,7 @@ class LyricsService:
         has_saved_id = "lyrics_record_id" in meta and saved_id is not None
         matched_content = False
         options = []
+        found = sorted(found, key=lambda c: lyrics.search_rank(c, meta["artist"], meta["title"], meta["duration"]))[:20 if q.strip() else None]
         for c in found:
             raw = c.get("syncedLyrics") or ""
             lines = [line["text"] for line in lyrics.parse_lrc(raw) if line.get("text")]
@@ -208,6 +209,7 @@ class LyricsService:
                 selected = not matched_content and raw == current
                 matched_content = matched_content or selected
             options.append({"id": c.get("id"), "track": c.get("trackName"), "artist": c.get("artistName"), "album": c.get("albumName"),
+                            "enhanced": lyrics.enhanced_sync(raw),
                             "language": lyrics.LANGUAGES[lyrics.script(raw)], "lines": len(lines), "preview": lines[:2], "current": selected,
                             # seconds longer (+) or shorter than this song: a big gap usually means another version
                             "difference": round(float(c.get("duration") or 0) - meta["duration"])})
@@ -282,6 +284,7 @@ class LyricsService:
                 "album": candidate.get("albumName"), "difference": difference,
                 "formats": {
                     "synced": {"available": synced_available, "current": synced_current,
+                               "enhanced": synced_available and lyrics.enhanced_sync(raw),
                                "language": lyrics.LANGUAGES[lyrics.script(raw)] if synced_available else None,
                                "lines": len(synced_lines), "preview": synced_lines[:2]},
                     "plain": {"available": plain_available, "selected": plain_selected,

@@ -176,6 +176,27 @@ class APITests(unittest.TestCase):
         self.assertTrue(payload['results'][1]['formats']['plain']['active'])
         self.assertTrue(payload['results'][2]['formats']['plain']['available'])
 
+    def test_enhanced_metadata_is_available_in_both_search_endpoints(self):
+        import json
+        from ktvibes.queue import State
+        item = State.entry('aaaaaaaaaaa', 'Artist', 'Song')
+        item['duration'] = 240
+        self.runtime.state.upcoming.append(item)
+        folder = Path(self.temp.name) / item['id']
+        folder.mkdir()
+        (folder / 'meta.json').write_text(json.dumps({'artist': 'Artist', 'title': 'Song', 'duration': 240}))
+        records = [dict(id=1, trackName='Song', artistName='Artist', duration=238,
+                        syncedLyrics='[00:01.00]<00:01.00>Hello <00:02.00>world<00:03.00>', plainLyrics='Hello world')]
+        async def search(*args): return records
+        with patch.object(self.lyrics, 'mixed_search', search), patch.object(self.lyrics, 'search', search):
+            mixed = self.client.get(f"/api/lyrics/choices/{item['key']}", params={'q': 'Song'}).json()['results'][0]
+            legacy = self.client.get('/api/songs/aaaaaaaaaaa/lyrics', params={'q': 'Song'}).json()[0]
+        self.assertTrue(mixed['formats']['synced']['enhanced'])
+        self.assertTrue(mixed['formats']['plain']['available'])
+        self.assertTrue(legacy['enhanced'])
+        self.assertEqual(mixed['formats']['synced']['preview'], ['Hello world'])
+        self.assertEqual((mixed['difference'], legacy['difference']), (-2, -2))
+
     def test_lyrics_search_503_returns_a_clear_wait_and_retry_message(self):
         from types import SimpleNamespace
         from ktvibes.queue import State

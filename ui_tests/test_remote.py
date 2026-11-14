@@ -252,7 +252,9 @@ def test_lyrics_view_search_and_selection(remote, page, kind):
     expect(term).to_have_attribute("aria-pressed", "false")
     page.get_by_role("searchbox", name="Search lyrics").fill("custom Japanese query")
     page.locator(".lyric-search button").click()
-    page.get_by_role("button", name=f"Use {kind}", exact=True).click()
+    if kind == "Plain":
+        page.locator(".lyric-version").click()
+    page.locator(".lyric-select").click()
     expect(page.locator(".lyric-view-status")).to_have_text(f"{kind} lyrics")
     posts = [(path, body) for method, path, body in remote.requests if method == "POST"]
     expected_path = "/api/lyrics/plain/current" if kind == "Plain" else "/api/songs/aaaaaaaaaaa/lyrics"

@@ -1,6 +1,7 @@
 """Unicode LRC support. Run: uv run python -m ktvibes.lyrics ARTIST TITLE SECONDS"""
 import asyncio
 import json
+import math
 import re
 import sys
 import time
@@ -123,12 +124,46 @@ def lrclib():
 
 async def search(query: str, duration: float) -> list[dict]:
     """Free-text LRCLIB search for the remote, when the automatic lookup found nothing or the wrong song.
-    Any synced record qualifies; the closest in length to the song comes first."""
+    Any synced record qualifies; the caller ranks and limits versions for its target."""
     async with lrclib() as client:
         response = await client.get("/api/search", params={"q": query})
         response.raise_for_status()
     synced = [c for c in response.json() if STAMP.search(c.get("syncedLyrics") or "")]
-    return sorted(synced, key=lambda c: abs(float(c.get("duration") or 0) - duration))[:20]
+    return synced
+
+def enhanced_sync(raw: str) -> bool:
+    """Only parsed, non-empty lines with usable word timing count as Enhanced LRC."""
+    for line in parse_lrc(raw):
+        if not line.get("exact") or not line["text"].strip():
+            continue
+        words = [unit for unit in line.get("units", []) if unit[0].strip()]
+        if words and all(math.isfinite(unit[1]) and math.isfinite(unit[2]) and unit[2] > unit[1] for unit in words):
+            return True
+    return False
+
+
+def search_rank(candidate: dict, artist: str, title: str, duration: float | None) -> tuple:
+    """Match the song first, then prefer supplied word timing, line timing and plain text."""
+    def match(value, wanted):
+        got = plain_identity(value)
+        names = [plain_identity(v) for v in variants(wanted)]
+        if got and names and got == names[0]:
+            return 0
+        if got and any(name and (got == name or (len(name) >= 4 and (name in got or got in name))) for name in names):
+            return 1
+        return 2
+    raw = candidate.get("syncedLyrics") or ""
+    quality = 0 if enhanced_sync(raw) else 1 if STAMP.search(raw) else 2
+    try:
+        seconds = float(candidate.get("duration"))
+        gap = abs(seconds - float(duration)) if seconds > 0 and duration else float("inf")
+        if not math.isfinite(gap):
+            gap = float("inf")
+    except (TypeError, ValueError):
+        gap = float("inf")
+    return (match(candidate.get("trackName"), title), match(candidate.get("artistName"), artist),
+            quality, gap, int(candidate.get("id") or 0), str(candidate.get("trackName") or "").casefold())
+
 
 async def mixed_search(query: str, artist: str, title: str, duration: float | None) -> list[dict]:
     """One LRCLIB record per result; manual queries may surface plain records despite bad auto metadata."""
@@ -139,25 +174,11 @@ async def mixed_search(query: str, artist: str, title: str, duration: float | No
     unique = {}
     for candidate in records:
         synced = isinstance(candidate.get("syncedLyrics"), str) and bool(STAMP.search(candidate["syncedLyrics"]))
-        plain_score = plain_match_score(candidate, artist, title, duration)
-        plain_available = valid_plain_text(candidate) is not None
-        if not synced and not plain_available:
+        if not synced and valid_plain_text(candidate) is None:
             continue
         key = candidate.get("id") or (candidate.get("artistName"), candidate.get("trackName"), candidate.get("albumName"))
-        if key not in unique:
-            unique[key] = (candidate, plain_score)
-    # Keep the result deterministic while letting useful synced and accurately matched plain records
-    # rank ahead of irrelevant synced editions returned by LRCLIB's free-text query.
-    def order(item):
-        candidate, plain_score = item
-        synced = bool(STAMP.search(candidate.get("syncedLyrics") or ""))
-        try:
-            gap = abs(float(candidate.get("duration") or 0) - float(duration)) if duration else float("inf")
-        except (TypeError, ValueError):
-            gap = float("inf")
-        return (not synced, plain_score or (True, True, gap, int(candidate.get("id") or 0)), gap,
-                int(candidate.get("id") or 0), str(candidate.get("trackName") or "").casefold())
-    return [candidate for candidate, _ in sorted(unique.values(), key=order)[:50]]
+        unique.setdefault(key, candidate)
+    return sorted(unique.values(), key=lambda c: search_rank(c, artist, title, duration))[:50]
 
 async def record(record_id: int) -> dict | None:
     """One LRCLIB record by id, as listed by candidates() or search()."""

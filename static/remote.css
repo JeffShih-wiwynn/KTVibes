@@ -310,9 +310,10 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 .lyric-option .lyric-format-preview{display:grid;gap:4px;min-width:0}
 .lyric-option .lyric-format-preview>span{font-size:10px;color:var(--muted)}
 .lyric-card-preview small{font-size:14px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
-.lyric-card-actions{justify-content:flex-end;margin-top:3px}
+.lyric-card-actions{justify-content:space-between;margin-top:3px}
 .lyric-card-actions button{min-height:40px;padding:7px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font-size:13px;font-weight:700}
-.lyric-card-actions button:disabled{opacity:.5}
+.lyric-card-actions button:disabled{opacity:.5;filter:grayscale(1)}
+.lyric-option .lyric-format.active{border-color:var(--lime);color:var(--lime)!important}
 .lyric-all{padding:12px;color:var(--muted);font-size:13px}
 @keyframes sheet-in{from{transform:translateY(100%)}}@keyframes sheet-out{to{transform:translateY(100%)}}
 @keyframes fade-in{from{opacity:0}}@keyframes fade-out{to{opacity:0}}
@@ -354,3 +355,14 @@ body.sheet-open .toast.on{transform:translate(-50%,0)}
 @media(prefers-reduced-motion:reduce){.identity-pop,.identity-form,.profile-button,.identity-add,.identity-avatar-choice img{transition:none}.managing .identity-tile .identity-choice,.identity-delete-confirm{animation:none!important}.identity-drag-ghost{transform:none}}
 /* Attribution follows the specific request, including duplicate songs. */
 #hero-requester{margin-top:8px;max-width:min(100%,240px);color:#fffC}#dock-requester{margin-left:8px}.dock-now>.info{min-width:0}#queue .song-requester{display:flex;margin-top:5px;font-size:11px}#queue .song-requester img{width:18px;height:18px}
+
+/* Lyric format transitions preserve the button footprint and animate only the preview area. */
+.lyric-option{transition:border-color .18s ease,box-shadow .18s ease}
+.lyric-format{transition:color .18s ease,border-color .18s ease,background-color .18s ease}
+.lyric-card-actions button{transition:color .18s ease,background-color .18s ease,border-color .18s ease,opacity .18s ease,filter .18s ease}
+.lyric-card-actions :is(.lyric-version,.lyric-select){display:inline-grid;place-items:center}
+.lyric-card-actions :is(.lyric-version,.lyric-select)::before{content:attr(data-width-label);grid-area:1/1;visibility:hidden}
+.lyric-card-actions button>span{grid-area:1/1;min-width:0;flex:none;color:inherit;font:inherit}
+.lyric-option .lyric-card-preview{position:relative;box-sizing:border-box}
+.lyric-option .lyric-preview-outgoing{position:absolute;inset:0 auto auto 0;width:100%;display:grid;gap:4px;pointer-events:none}
+@media(prefers-reduced-motion:reduce){.lyric-option,.lyric-format,.lyric-card-actions button{transition:none}}

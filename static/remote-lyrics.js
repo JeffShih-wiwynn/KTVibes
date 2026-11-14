@@ -1,4 +1,5 @@
 import {el, api} from './shared.js';
+import {createLyricPreview} from './lyric-preview.js';
 
 export function createLyricsPanel({getState, toast}) {
  let openLyricsDialog;
@@ -29,7 +30,8 @@ export function createLyricsPanel({getState, toast}) {
   const choosePane=el('section',undefined,'lyric-choose-pane'),chooseStatus=el('p',undefined,'lyric-choose-status muted'),form=el('form',undefined,'lyric-search'),input=el('input'),go=el('button','Search'),termPicker=el('div',undefined,'lyric-search-terms'),preview=el('div',undefined,'lyric-preview'),list=el('div',undefined,'lyric-options'),chooseActions=el('div',undefined,'lyric-choose-actions'),unavailable=el('button','No suitable lyrics','lyric-unavailable');
   unavailable.type='button';chooseActions.append(unavailable);
   input.type='search';input.placeholder='Artist, title, or search terms';input.setAttribute('aria-label','Search lyrics');go.type='submit';form.append(input,go);
-  let searchTerms=[],searchCooldownTimer=null;
+  let searchTerms=[],searchCooldownTimer=null,choiceControls=[],choiceCleanups=[],savingChoice=false;
+  const clearChoiceAnimations=()=>{choiceCleanups.forEach(cleanup=>cleanup());choiceCleanups=[];};
   const syncSearchTermButtons=()=>{const query=input.value.toLocaleLowerCase();for(const button of termPicker.querySelectorAll('button')){const value=button.dataset.term,key=value.toLocaleLowerCase(),active=query.includes(key);button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));}};
   const setSearchTermTarget=target=>{
    searchTerms=lyricsSearchTerms(target?.artist,target?.title);termPicker.replaceChildren();
@@ -46,7 +48,7 @@ export function createLyricsPanel({getState, toast}) {
   setSearchTermTarget(song);input.addEventListener('input',syncSearchTermButtons);
   fontControls.append(smaller,larger);viewControls.append(fontControls);viewPane.append(viewControls,viewStatus,reader);
   tabs.append(viewTab,chooseTab);panel.append(grip,tabs,viewPane,choosePane);sheet.append(panel);document.body.append(sheet);
-  const shut=()=>{if(closed)return;closed=true;viewToken++;searchToken++;clearTimeout(searchCooldownTimer);sheet.classList.add('out');sheet.addEventListener('animationend',()=>sheet.remove(),{once:true});if(openLyricsDialog?.sheet===sheet)openLyricsDialog=null;};
+  const shut=()=>{if(closed)return;closed=true;clearChoiceAnimations();viewToken++;searchToken++;clearTimeout(searchCooldownTimer);sheet.classList.add('out');sheet.addEventListener('animationend',()=>sheet.remove(),{once:true});if(openLyricsDialog?.sheet===sheet)openLyricsDialog=null;};
   let gripStart=null,gripMoved=false;
   grip.onclick=()=>{if(gripMoved){gripMoved=false;return;}shut();};
   grip.onpointerdown=e=>{if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();gripStart=e.clientY;gripMoved=false;panel.style.transition='none';grip.setPointerCapture(e.pointerId);};
@@ -60,7 +62,7 @@ export function createLyricsPanel({getState, toast}) {
   const pickerTarget=()=>liveTarget()||(!targetKey&&!follow?song:null);
   const eligibleQueue=()=>getState()?.upcoming?.find(item=>item.key===targetKey&&item.status==='ready');
   const isCurrent=()=>!!(getState()?.current&&targetKey&&getState().current.key===targetKey);
-  function refreshControls(){const pending=getState()?.upcoming?.find(item=>item.key===targetKey),current=isCurrent(),editable=!!(eligibleQueue()||current||pending||(!targetKey&&!follow&&song.id));form.hidden=!editable;const preparing=!!(pending&&pending.status!=='ready');chooseStatus.textContent=preparing?'Plain lyrics can be saved while this song prepares. Synced selection is available when ready.':'';chooseStatus.hidden=!preparing;}
+  function refreshControls(){const pending=getState()?.upcoming?.find(item=>item.key===targetKey),current=isCurrent(),editable=!!(eligibleQueue()||current||pending||(!targetKey&&!follow&&song.id));form.hidden=!editable;const preparing=!!(pending&&pending.status!=='ready');chooseStatus.textContent=preparing?'Plain lyrics can be saved while this song prepares. Synced selection is available when ready.':'';chooseStatus.hidden=!preparing;for(const update of choiceControls)update();}
   async function loadView(){
    const key=targetKey,mine=++viewToken;if(!key){viewStatus.textContent='Open Lyrics from the current song or a queued song to read lyrics.';reader.textContent='';return;}
    const target=liveTarget();if(!target){viewStatus.textContent=reader.textContent?'Song is no longer in the queue.':'Song is no longer available.';return;}
@@ -84,12 +86,14 @@ export function createLyricsPanel({getState, toast}) {
    if(go.disabled)return;
    chooseActions.hidden=true;
    const mine=++searchToken,target=pickerTarget(),searchedKey=targetKey;if(!target||!(eligibleQueue()||isCurrent()||getState()?.upcoming?.some(item=>item.key===targetKey)||(!targetKey&&!follow&&song.id)))return;
+   clearChoiceAnimations();choiceControls=[];
    const wait=el('p',query?'Searching…':'Looking up every version…','muted lyric-wait'),bar=el('span',undefined,'pbar busy classic-only');for(let i=0;i<40;i++){const cell=el('i');cell.style.animationDelay=`${(i*.045).toFixed(3)}s`;bar.append(cell);}wait.append(el('span',query?'검색 중':'모든 가사 버전을 찾는 중','classic-only'),bar);list.replaceChildren(wait);
    try{
     let data;
     if(searchedKey)data=await api(`/api/lyrics/choices/${encodeURIComponent(searchedKey)}?q=${encodeURIComponent(query||`${target.artist} ${target.title}`)}`);
-    else{const legacy=await api(`/api/songs/${target.id}/lyrics${query?`?q=${encodeURIComponent(query)}`:''}`);data={synced_active:legacy.some(item=>item.current),results:legacy.map(item=>({id:item.id,track:item.track,artist:item.artist,album:item.album,difference:item.difference,formats:{synced:{available:true,current:item.current,language:item.language,lines:item.lines,preview:item.preview},plain:{available:false,selected:false,active:false,preview:[],lines:0}}}))};}
+    else{const legacy=await api(`/api/songs/${target.id}/lyrics${query?`?q=${encodeURIComponent(query)}`:''}`);data={synced_active:legacy.some(item=>item.current),results:legacy.map(item=>({id:item.id,track:item.track,artist:item.artist,album:item.album,difference:item.difference,formats:{synced:{available:true,current:item.current,enhanced:!!item.enhanced,language:item.language,lines:item.lines,preview:item.preview},plain:{available:false,selected:false,active:false,preview:[],lines:0}}}))};}
     if(closed||mine!==searchToken||searchedKey!==targetKey||!pickerTarget())return;
+    choiceControls=[];
     chooseActions.hidden=!searchedKey;
     unavailable.textContent=data.selection_format==='none'?'Marked as unavailable':'No suitable lyrics';unavailable.disabled=data.selection_format==='none';
     const options=data.results||[];const none=el('p',undefined,'muted lyric-none');none.append(el('b','No suitable lyrics found','classic-only'),query?'Try fewer words, or use the song title in its original script.':'Search LRCLIB for synced or plain lyrics.');list.replaceChildren(...(options.length?[]:[none]));
@@ -100,11 +104,28 @@ export function createLyricsPanel({getState, toast}) {
       metadataParts=[o.artist,o.album].filter(Boolean).map(value=>String(value).trim()).filter((value,index,values)=>{const key=value.toLocaleLowerCase();return key!==trackKey&&values.findIndex(item=>item.toLocaleLowerCase()===key)===index;}),
       card=el('article',undefined,'lyric-option'+(selected?' current':'')),top=el('div',undefined,'lyric-card-head');
      top.append(el('b',track));if(metadataParts.length)top.append(el('span',metadataParts.join(' · ')));card.append(top);
-     const formats=el('div',undefined,'lyric-formats');for(const kind of kinds)formats.append(el('span',kind==='synced'?'Synced':'Plain','lyric-format'));
+     const formatName=kind=>kind==='plain'?'Plain':o.formats.synced.enhanced?'Enhanced Sync':'Sync';
+     const formats=el('div',undefined,'lyric-formats'),tags=new Map();
+     for(const kind of kinds){const tag=el('span',formatName(kind),'lyric-format');tags.set(kind,tag);formats.append(tag);}
      if(o.difference!==null&&o.difference!==undefined&&o.difference!==0)formats.append(el('span',`${Math.abs(o.difference)}s ${o.difference>0?'longer':'shorter'}`,'lyric-format lyric-duration'));
-     card.append(formats);
-     const block=el('div',undefined,'lyric-card-preview');for(const kind of kinds){const preview=el('div',undefined,'lyric-format-preview');if(kinds.length>1)preview.append(el('span',kind==='synced'?'Synced preview':'Plain preview'));for(const line of o.formats[kind].preview||[])preview.append(el('small',line));block.append(preview);}card.append(block);
-     const actions=el('div',undefined,'lyric-card-actions');for(const kind of kinds){const active=kind==='synced'?selectedSynced:selectedPlain,label=active?'Selected':kinds.length>1?`Use ${kind==='synced'?'Synced':'Plain'}`:'Select',select=el('button',label);select.type='button';select.disabled=active||(kind==='synced'&&!!getState()?.upcoming?.some(item=>item.key===targetKey&&item.status!=='ready'));if(!active)select.onclick=()=>saveChoice(select,o,kind,target);actions.append(select);}if(kinds.length)card.append(actions);list.append(card);
+     const block=el('div',undefined,'lyric-card-preview'),reading=el('div',undefined,'lyric-format-preview'),
+      actions=el('div',undefined,'lyric-card-actions'),toggle=el('button',undefined,'lyric-version'),select=el('button',undefined,'lyric-select'),selectLabel=el('span','Select');
+     let shown=kinds[0];toggle.type=select.type='button';select.append(selectLabel);select.dataset.widthLabel='Selected';block.append(reading);actions.append(toggle,select);card.append(formats,block,actions);
+     const motion=createLyricPreview(block,reading,toggle,kinds.map(formatName));
+     choiceCleanups.push(()=>motion.destroy());
+     const update=()=>{
+      const active=shown==='synced'?selectedSynced:selectedPlain;
+      motion.label(formatName(shown));toggle.disabled=savingChoice||kinds.length<2;
+      toggle.title=kinds.length>1?`Switch to ${formatName(kinds.find(kind=>kind!==shown))}`:'Only available format';
+      selectLabel.textContent=active?'Selected':'Select';
+      select.disabled=savingChoice||active||(shown==='synced'&&!!getState()?.upcoming?.some(item=>item.key===targetKey&&item.status!=='ready'));
+      card.classList.toggle('current',active);card.dataset.previewFormat=shown;
+      for(const [kind,tag] of tags){tag.classList.toggle('active',kind===shown);tag.setAttribute('aria-current',String(kind===shown));}
+     };
+     const showVersion=()=>{motion.show(o.formats[shown].preview||[]);update();};
+     toggle.onclick=()=>{if(toggle.disabled)return;shown=kinds[(kinds.indexOf(shown)+1)%kinds.length];showVersion();};
+     select.onclick=()=>saveChoice(select,o,shown,target);
+     choiceControls.push(update);showVersion();list.append(card);
     }
    }catch(error){if(mine===searchToken){chooseActions.hidden=true;const isBusy=error.status===503||error.message.includes('LRCLIB is temporarily busy'),isLimited=error.status===429||error.message.includes('LRCLIB is limiting lyric searches'),retryAfter=Math.max(1,Math.min(60,Math.ceil(error.retryAfter||(isLimited?Number(error.message.match(/wait (\d+) seconds/)?.[1])||5:1)))),message=el('p',isBusy?'LRCLIB is temporarily busy. Please wait 1 second, then try again.':isLimited?`LRCLIB is limiting lyric searches. Please wait ${retryAfter} seconds, then try again.`:'Lyrics search failed. Please try again.','error');list.replaceChildren(message);if(isBusy||isLimited){go.disabled=true;clearTimeout(searchCooldownTimer);searchCooldownTimer=setTimeout(()=>{if(!closed&&mine===searchToken)go.disabled=false;},retryAfter*1000);}}}
   }
@@ -112,14 +133,14 @@ export function createLyricsPanel({getState, toast}) {
    const key=targetKey;if(button.disabled||button.dataset.saving)return;
    const destination=kind==='plain'?(key?`/api/lyrics/plain/${encodeURIComponent(key)}`:null):getState()?.current?.key===key&&key?`/api/songs/${target.id}/lyrics`:eligibleQueue()?`/api/queue/${encodeURIComponent(key)}/lyrics`:!key&&!follow?`/api/songs/${target.id}/lyrics`:null;
    if(!destination){toast('This song is no longer available for lyrics settings.',undefined,'err');return;}
-   const buttons=[...list.querySelectorAll('button')];buttons.forEach(item=>item.disabled=true);button.dataset.saving='1';button.classList.add('busy');
+   savingChoice=true;choiceControls.forEach(update=>update());button.dataset.saving='1';button.classList.add('busy');
    try{
     const result=await api(destination,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:option.id})});
     if(closed||key!==targetKey)return;
     toast(`${kind==='plain'?'Plain':'Synced'} lyrics selected for ${target.title}.`);
     await loadView();searchLoaded=false;if(kind==='synced'||result.source==='plain'||result.source==='synced')setTab('view');
    }catch(error){toast(error.message,undefined,'err');}
-   finally{delete button.dataset.saving;button.classList.remove('busy');if(!closed){buttons.forEach(item=>item.disabled=false);refreshControls();}}
+   finally{delete button.dataset.saving;button.classList.remove('busy');savingChoice=false;if(!closed)refreshControls();}
   }
   unavailable.onclick=async()=>{
    if(unavailable.disabled||!targetKey)return;
