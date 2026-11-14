@@ -85,3 +85,19 @@ The preparation tests also check that separate workers own separate video task
 registries, and failed atomic JSON replacement preserves the previous file and
 cleans its temporary file. Unicode metadata/LRC tests assert persisted behavior
 rather than counting file-read statements in the worker implementation.
+
+## Power management
+
+Python tests cover room activity, paused playback, failed queues, application
+shutdown and native API adapters. Host sleep inhibition stays active while a
+current song or a non-failed queued song exists, independently of the TUI.
+The Linux installation smoke test also acquires a real logind sleep inhibitor
+and checks its release after normal cleanup and abrupt parent-process exit.
+
+Player browser tests simulate Screen Wake Lock responses, including delayed
+requests, rejection, automatic release, page visibility and navigation. Pausing
+releases the screen lock while the host remains awake. Unsupported browsers
+and insecure contexts keep working without screen inhibition; localhost and
+trusted HTTPS can use the browser API. Remote does not acquire screen locks.
+Physical sleep, display power and television power-saving behavior require
+manual verification on the target devices.

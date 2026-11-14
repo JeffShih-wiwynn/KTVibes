@@ -23,6 +23,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          runner_user="$(id -un)"
+          printf "polkit.addRule(function(action, subject) {\n  if (action.id === 'org.freedesktop.login1.inhibit-block-sleep' && subject.user === '%s') return polkit.Result.YES;\n});\n" "$runner_user" | sudo tee /etc/polkit-1/rules.d/50-ktvibes-ci.rules > /dev/null
           sudo systemctl start user@$(id -u).service
           echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"

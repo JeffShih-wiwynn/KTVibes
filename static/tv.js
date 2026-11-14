@@ -1,3 +1,4 @@
+import {createScreenWakeLock} from './wake-lock.js';
 import {createInvite} from './tv-invite.js';
 import {createBrandRotation} from './tv-brand.js';
 import {fillFrame} from './video-frame.js';
@@ -7,6 +8,7 @@ const music=$('instrumental'),voice=$('vocals'),video=$('backdrop');
 video.muted=true;
 let breather=0,guide,state,lyrics=[],firstLine=-1,stemGain=1,currentKey=null,context,musicGain,voiceGain,shifter,enabled=false,activeLine=-1,starting=false,generation=0,lastReport=0,seekTo=null,serverSkew=0,buffering=false,videoStarting=false,lyricsPositioned=false,lastSeek=0,shownPair='',fitKey='';
 const rotateBrand = createBrandRotation();
+const updateScreenWakeLock = createScreenWakeLock();
 const error=text=>$('tv-error').textContent=text;
 // This screen remembers its own display settings and restores them each time it (re)connects.
 const SETTINGS='ktvibes.tv-settings',SETTING_KEYS=['lyric_scale','vocal','guide','video_mode','lyric_mode'];let restoring=false;
@@ -71,6 +73,7 @@ async function refreshRemoteAddress(){
 }
 refreshRemoteAddress();setInterval(refreshRemoteAddress,5000);
 function render(next){
+ updateScreenWakeLock(next);
  state=next;if(restoring){restoring=false;restore(state);}else remember(state);if(state.guide!==guide){if(guide!==undefined)showGuideBadge(state.guide);guide=state.guide;document.body.dataset.guide=guide;}showChanges(state);showQueueChange(state);document.body.style.setProperty('--lyric-scale',state.lyric_scale??1.5);document.body.dataset.video=state.video_mode||'show';document.body.dataset.lyrics=state.lyric_mode||'two';document.body.dataset.theme=state.theme||'default';for(const b of document.querySelectorAll('[data-theme-pick]'))b.setAttribute('aria-pressed',b.dataset.themePick===document.body.dataset.theme);showClassicBar(state);showSpecs(state);showBoot();roomClock();serverSkew=state.server_time-Date.now()/1000;$('vocal').value=state.vocal;if(document.activeElement!==$('tv-music'))$('tv-music').value=state.music??1;$('tv-play').classList.toggle('paused',!state.playing);$('tv-play').setAttribute('aria-label',state.playing?'Pause':'Play');$('tv-guide').textContent=GUIDE_BADGES[state.guide]?.[0]??'Aa';$('tv-guide').hidden=(state.guides||[]).length<2;syncRanges();applyGain();
  const queued=state.upcoming.filter(i=>i.status!=='error');
  const classic=state.theme==='classic';

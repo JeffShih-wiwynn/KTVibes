@@ -3,7 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from . import songbook, stems, worker
+from . import power, songbook, stems, worker
 from .runtime import Runtime
 from .routes import catalog, lyrics, playback, system
 
@@ -20,7 +20,8 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
             video_id: meta['prepared'] for video_id, meta in runtime.library.prepared_songs().items()
         })
         tasks = [asyncio.create_task(worker.run(runtime.state, runtime.cache)),
-                 asyncio.create_task(runtime.updates.run())]
+                 asyncio.create_task(runtime.updates.run()),
+                 asyncio.create_task(power.SleepInhibitor().run(runtime.state))]
         try:
             yield
         finally:

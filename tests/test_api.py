@@ -12,7 +12,7 @@ AVAILABLE = all(importlib.util.find_spec(name) for name in ('fastapi', 'httpx', 
 class APITests(unittest.TestCase):
     def setUp(self):
         from fastapi.testclient import TestClient
-        from ktvibes import main, lyrics, worker, youtube
+        from ktvibes import main, lyrics, power, worker, youtube
         self.youtube = youtube
         from ktvibes.application import create_app
         from ktvibes.runtime import Runtime
@@ -25,7 +25,8 @@ class APITests(unittest.TestCase):
         self.runtime = Runtime(cache=Path(self.temp.name))
         async def idle_worker(*args):
             await asyncio.Event().wait()
-        self.patches = [patch.object(worker, 'run', idle_worker),
+        self.patches = [patch.object(power.SleepInhibitor, 'run', idle_worker),
+                        patch.object(worker, 'run', idle_worker),
                         patch.object(self.runtime.updates, 'run', idle_worker)]
         for item in self.patches:
             item.start()

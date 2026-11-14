@@ -36,6 +36,7 @@ wait_for_server() {
 }
 systemctl --user start ktvibes.service
 wait_for_server
+"$app_dir/.venv/bin/python" "$app_dir/tools/ci/linux-power-smoke.py"
 first_head="$(git -C "$app_dir" rev-parse HEAD)"
 mkdir -p "$app_dir/cache"
 echo preserved > "$app_dir/cache/ci-sentinel"
